@@ -21,8 +21,9 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { formatCurrency, toDateKey } from "@/lib/format";
+import { upsertQueuedRecord, useIsOnline } from "@/lib/offline";
 import { cn } from "@/lib/utils";
-import { Loader2, Plus, Store } from "lucide-react";
+import { CloudOff, Loader2, Plus, Store } from "lucide-react";
 import { useMutation } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -65,6 +66,7 @@ export function RecordDialog({
   onSaved?: () => void;
 }) {
   const upsert = useMutation(api.records.upsert);
+  const isOnline = useIsOnline();
   const [storeId, setStoreId] = useState<string>("");
   const [date, setDate] = useState<string>(toDateKey());
   const [amounts, setAmounts] = useState<Record<AmountKey, string>>({
@@ -110,22 +112,37 @@ export function RecordDialog({
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!storeId) return;
+    const payload = {
+      storeId: storeId as Doc<"stores">["_id"],
+      date,
+      totalSales: Number(amounts.totalSales) || 0,
+      cash: Number(amounts.cash) || 0,
+      online: Number(amounts.online) || 0,
+      financed: Number(amounts.financed) || 0,
+      note: note.trim() ? note.trim() : undefined,
+    };
     setSaving(true);
     try {
-      await upsert({
-        storeId: storeId as Doc<"stores">["_id"],
-        date,
-        totalSales: Number(amounts.totalSales) || 0,
-        cash: Number(amounts.cash) || 0,
-        online: Number(amounts.online) || 0,
-        financed: Number(amounts.financed) || 0,
-        note: note.trim() ? note.trim() : undefined,
-      });
+      if (isOnline) {
+        try {
+          await upsert(payload);
+          onOpenChange(false);
+          toast.success(editing ? "Record updated" : "Sales record saved");
+          onSaved?.();
+          return;
+        } catch (error) {
+          // Network hiccup — fall through to the offline queue so nothing is lost.
+          console.warn("Save failed, queueing offline instead:", error);
+        }
+      }
+      upsertQueuedRecord(payload);
       onOpenChange(false);
-      toast.success(editing ? "Record updated" : "Sales record saved");
+      toast.success(
+        isOnline
+          ? "Saved — will retry syncing"
+          : "Saved offline — syncs automatically when you're back online",
+      );
       onSaved?.();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Something went wrong");
     } finally {
       setSaving(false);
     }
@@ -145,6 +162,15 @@ export function RecordDialog({
 
         {hasStores ? (
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+            {!isOnline && (
+              <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-400">
+                <CloudOff className="size-3.5 shrink-0" />
+                <span>
+                  You&apos;re offline — this record saves to your device and syncs
+                  automatically when you&apos;re back online.
+                </span>
+              </div>
+            )}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="flex flex-col gap-2">
                 <Label htmlFor="record-store">Store</Label>

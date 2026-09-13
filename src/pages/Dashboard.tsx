@@ -1,5 +1,5 @@
 import { api } from "@/convex/_generated/api";
-import type { Doc } from "@/convex/_generated/dataModel";
+import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { Logo } from "@/components/Logo";
 import { RecordDialog } from "@/components/RecordDialog";
 import { StoresDialog } from "@/components/StoresDialog";
@@ -31,6 +31,17 @@ import {
   shiftDateKey,
   toDateKey,
 } from "@/lib/format";
+import {
+  readQueue,
+  readSettingsSnapshot,
+  readStoresSnapshot,
+  removeFromQueue,
+  syncQueue,
+  useIsOnline,
+  writeSettingsSnapshot,
+  writeStoresSnapshot,
+  type PendingRecord,
+} from "@/lib/offline";
 import { cn } from "@/lib/utils";
 import { useMutation, useQuery } from "convex/react";
 import {
@@ -38,6 +49,7 @@ import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
+  CloudOff,
   Coins,
   CreditCard,
   Landmark,
@@ -46,11 +58,12 @@ import {
   Pencil,
   Plus,
   Receipt,
+  RefreshCw,
   Store,
   Trash2,
   TrendingUp,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import {
   Area,
@@ -74,16 +87,93 @@ const RANGE_OPTIONS: { value: RangeMode; label: string; days: number | null }[] 
 
 const RANGE_START_FALLBACK = "2000-01-01";
 
+const CURRENCY_CODES = [
+  "USD", "EUR", "GBP", "INR", "AED", "SAR",
+  "PKR", "BDT", "NGN", "CAD", "AUD", "JPY",
+];
+
+/** Normalized row so live records and offline-pending records render alike. */
+type RecordRow = {
+  key: string;
+  storeId: Id<"stores">;
+  date: string;
+  totalSales: number;
+  cash: number;
+  online: number;
+  financed: number;
+  note?: string;
+  isPending: boolean;
+  doc: Doc<"salesRecords"> | null;
+  localId?: string;
+  savedAt: number;
+};
+
+function pendingToRow(pending: PendingRecord): RecordRow {
+  return {
+    key: pending.localId,
+    storeId: pending.storeId,
+    date: pending.date,
+    totalSales: pending.totalSales,
+    cash: pending.cash,
+    online: pending.online,
+    financed: pending.financed,
+    note: pending.note,
+    isPending: true,
+    doc: null,
+    localId: pending.localId,
+    savedAt: pending.createdAt,
+  };
+}
+
+function docToRow(doc: Doc<"salesRecords">): RecordRow {
+  return {
+    key: doc._id,
+    storeId: doc.storeId,
+    date: doc.date,
+    totalSales: doc.totalSales,
+    cash: doc.cash,
+    online: doc.online,
+    financed: doc.financed,
+    note: doc.note,
+    isPending: false,
+    doc,
+    savedAt: doc.updatedAt,
+  };
+}
+
 export default function Dashboard() {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
 
-  const stores = useQuery(api.stores.list) ?? [];
+  const isOnline = useIsOnline();
+
+  const liveStores = useQuery(api.stores.list) ?? [];
   const settings = useQuery(api.settings.get);
   const setCurrency = useMutation(api.settings.setCurrency);
+  const upsertRecord = useMutation(api.records.upsert);
   const removeRecord = useMutation(api.records.remove);
 
-  const currency = settings?.currency ?? "USD";
+  const [storesSnapshot] = useState(() => readStoresSnapshot());
+  const [settingsSnapshot] = useState(() => readSettingsSnapshot());
+  const [pendingQueue, setPendingQueue] = useState<PendingRecord[]>(() => readQueue());
+  const [syncing, setSyncing] = useState(false);
+  const syncingRef = useRef(false);
+
+  // Cache the latest stores/currency so offline sessions still have them.
+  useEffect(() => {
+    if (liveStores.length > 0) writeStoresSnapshot(liveStores);
+  }, [liveStores]);
+  useEffect(() => {
+    if (settings?.currency) writeSettingsSnapshot(settings.currency);
+  }, [settings?.currency]);
+
+  const stores = useMemo(() => {
+    if (liveStores.length > 0) return liveStores;
+    if (!isOnline) return storesSnapshot?.stores ?? [];
+    return liveStores;
+  }, [liveStores, isOnline, storesSnapshot]);
+
+  const currency = settings?.currency ?? settingsSnapshot?.currency ?? "USD";
 
   const [rangeMode, setRangeMode] = useState<RangeMode>("7d");
   const [anchor, setAnchor] = useState<string>(toDateKey());
@@ -91,7 +181,7 @@ export default function Dashboard() {
   const [editingRecord, setEditingRecord] = useState<Doc<"salesRecords"> | null>(null);
   const [recordDefaults, setRecordDefaults] = useState<{ storeId?: string; date?: string }>({});
   const [storesOpen, setStoresOpen] = useState(false);
-  const [pendingDelete, setPendingDelete] = useState<Doc<"salesRecords"> | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<RecordRow | null>(null);
   const [deleting, setDeleting] = useState(false);
 
   const today = toDateKey();
@@ -103,7 +193,20 @@ export default function Dashboard() {
     return { from: shiftDateKey(anchor, -(option.days - 1)), to: anchor };
   }, [rangeMode, anchor, today]);
 
-  const records = useQuery(api.records.listRange, { from, to }) ?? [];
+  const liveRecords = useQuery(api.records.listRange, { from, to });
+
+  const records = useMemo<RecordRow[]>(() => {
+    const base = (liveRecords ?? []).map(docToRow);
+    const pendingInRange = pendingQueue
+      .filter((q) => q.date >= from && q.date <= to)
+      .map(pendingToRow);
+    const merged = base.filter(
+      (row) => !pendingInRange.some((p) => p.storeId === row.storeId && p.date === row.date),
+    );
+    return [...merged, ...pendingInRange].sort((a, b) =>
+      a.date === b.date ? b.savedAt - a.savedAt : b.date.localeCompare(a.date),
+    );
+  }, [liveRecords, pendingQueue, from, to]);
 
   const storeNames = useMemo(() => {
     const map: Record<string, string> = {};
@@ -163,6 +266,31 @@ export default function Dashboard() {
     };
   }, [totals]);
 
+  // ---------- Offline sync ----------
+
+  const runSync = useCallback(async () => {
+    if (syncingRef.current) return;
+    syncingRef.current = true;
+    setSyncing(true);
+    try {
+      const pushed = await syncQueue(upsertRecord);
+      if (pushed > 0) {
+        toast.success(`Synced ${pushed} saved ${pushed === 1 ? "record" : "records"}`);
+      }
+    } finally {
+      syncingRef.current = false;
+      setSyncing(false);
+      setPendingQueue(readQueue());
+    }
+  }, [upsertRecord]);
+
+  // Auto-sync whenever connectivity (or auth) comes back.
+  useEffect(() => {
+    if (isOnline && pendingQueue.length > 0) {
+      void runSync();
+    }
+  }, [isOnline, pendingQueue.length, runSync]);
+
   const shiftWindow = (direction: 1 | -1) => {
     const option = RANGE_OPTIONS.find((r) => r.value === rangeMode)!;
     if (option.days === null) return;
@@ -175,7 +303,11 @@ export default function Dashboard() {
   const canGoForward = rangeMode !== "all" && anchor < today;
 
   const handleSignOut = async () => {
-    await signOut();
+    try {
+      await signOut();
+    } catch {
+      // Offline sign-out can fail; still leave the workspace.
+    }
     navigate("/");
   };
 
@@ -185,16 +317,24 @@ export default function Dashboard() {
     setRecordOpen(true);
   };
 
-  const openEditRecord = (record: Doc<"salesRecords">) => {
-    setEditingRecord(record);
+  const openEditRecord = (row: RecordRow) => {
+    if (!row.doc) return;
+    setEditingRecord(row.doc);
     setRecordOpen(true);
   };
 
   const handleDelete = async () => {
     if (!pendingDelete) return;
+    if (pendingDelete.isPending) {
+      removeFromQueue(pendingDelete.localId!);
+      setPendingQueue(readQueue());
+      setPendingDelete(null);
+      toast.success("Offline record discarded");
+      return;
+    }
     setDeleting(true);
     try {
-      await removeRecord({ id: pendingDelete._id });
+      await removeRecord({ id: pendingDelete.doc!._id });
       toast.success("Record deleted");
       setPendingDelete(null);
     } catch (error) {
@@ -235,6 +375,8 @@ export default function Dashboard() {
     },
   ];
 
+  const showPendingBanner = pendingQueue.length > 0;
+
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-30 border-b bg-background/80 backdrop-blur-md">
@@ -251,6 +393,7 @@ export default function Dashboard() {
           <div className="flex shrink-0 items-center gap-2">
             <Select
               value={currency}
+              disabled={!isOnline}
               onValueChange={(value) => {
                 void setCurrency({ currency: value }).catch(() =>
                   toast.error("Could not update currency"),
@@ -262,13 +405,11 @@ export default function Dashboard() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent align="end">
-                {["USD", "EUR", "GBP", "INR", "AED", "SAR", "PKR", "BDT", "NGN", "CAD", "AUD", "JPY"].map(
-                  (code) => (
-                    <SelectItem key={code} value={code}>
-                      {code}
-                    </SelectItem>
-                  ),
-                )}
+                {CURRENCY_CODES.map((code) => (
+                  <SelectItem key={code} value={code}>
+                    {code}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
             <Button
@@ -288,6 +429,37 @@ export default function Dashboard() {
       </header>
 
       <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
+        {/* Offline / sync banners */}
+        {!isOnline && (
+          <div className="mb-4 flex items-center gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
+            <CloudOff className="size-4 shrink-0" />
+            <span>
+              You&apos;re offline — showing your last synced data. New records save to
+              this device and sync automatically when you reconnect.
+            </span>
+          </div>
+        )}
+        {isOnline && showPendingBanner && (
+          <div className="mb-4 flex flex-wrap items-center gap-2.5 rounded-xl border border-primary/25 bg-accent px-4 py-3 text-sm text-accent-foreground">
+            {syncing ? (
+              <Loader2 className="size-4 shrink-0 animate-spin" />
+            ) : (
+              <RefreshCw className="size-4 shrink-0" />
+            )}
+            <span>
+              {syncing
+                ? "Syncing saved records…"
+                : `${pendingQueue.length} saved ${pendingQueue.length === 1 ? "record" : "records"} waiting to sync.`}
+            </span>
+            {!syncing && (
+              <Button size="sm" variant="outline" onClick={() => void runSync()}>
+                <RefreshCw className="size-3.5" />
+                Sync now
+              </Button>
+            )}
+          </div>
+        )}
+
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <h1 className="text-2xl font-bold tracking-tight sm:text-[1.75rem]">
@@ -532,7 +704,8 @@ export default function Dashboard() {
                   <p className="text-sm font-medium">No sales records here yet</p>
                   <p className="mt-1 max-w-sm text-xs text-muted-foreground">
                     Save today&apos;s total sales, cash and online payments, and financed
-                    items — plus a note — and they&apos;ll show up here.
+                    items — plus a note — and they&apos;ll show up here. Works offline
+                    too.
                   </p>
                 </div>
                 <Button size="sm" onClick={openNewRecord}>
@@ -556,36 +729,44 @@ export default function Dashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {records.map((record) => (
+                    {records.map((row) => (
                       <tr
-                        key={record._id}
-                        className="border-b border-border/60 transition-colors last:border-0 hover:bg-muted/50"
+                        key={row.key}
+                        className={cn(
+                          "border-b border-border/60 transition-colors last:border-0 hover:bg-muted/50",
+                          row.isPending && "bg-accent/40",
+                        )}
                       >
                         <td className="py-2.5 pr-3 font-medium whitespace-nowrap">
-                          {dateKeyLabel(record.date)}
+                          {dateKeyLabel(row.date)}
+                          {row.isPending && (
+                            <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+                              Offline
+                            </span>
+                          )}
                         </td>
                         <td className="py-2.5 pr-3 whitespace-nowrap">
                           <span className="inline-flex items-center gap-1.5">
                             <Store className="size-3.5 text-muted-foreground" />
-                            {storeNames[record.storeId] ?? "Unknown store"}
+                            {storeNames[row.storeId] ?? "Unknown store"}
                           </span>
                         </td>
                         <td className="font-mono-num py-2.5 pr-3 text-right font-semibold">
-                          {formatCurrency(record.totalSales, currency)}
+                          {formatCurrency(row.totalSales, currency)}
                         </td>
                         <td className="font-mono-num hidden py-2.5 pr-3 text-right text-muted-foreground sm:table-cell">
-                          {formatCurrency(record.cash, currency)}
+                          {formatCurrency(row.cash, currency)}
                         </td>
                         <td className="font-mono-num hidden py-2.5 pr-3 text-right text-muted-foreground sm:table-cell">
-                          {formatCurrency(record.online, currency)}
+                          {formatCurrency(row.online, currency)}
                         </td>
                         <td className="font-mono-num hidden py-2.5 pr-3 text-right text-muted-foreground md:table-cell">
-                          {formatCurrency(record.financed, currency)}
+                          {formatCurrency(row.financed, currency)}
                         </td>
                         <td className="hidden max-w-[220px] py-2.5 pr-3 md:table-cell">
-                          {record.note ? (
-                            <span className="line-clamp-1 text-muted-foreground" title={record.note}>
-                              {record.note}
+                          {row.note ? (
+                            <span className="line-clamp-1 text-muted-foreground" title={row.note}>
+                              {row.note}
                             </span>
                           ) : (
                             <span className="text-muted-foreground/60">—</span>
@@ -593,21 +774,23 @@ export default function Dashboard() {
                         </td>
                         <td className="py-2.5 text-right">
                           <div className="inline-flex items-center gap-1">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="size-7 text-muted-foreground"
-                              onClick={() => openEditRecord(record)}
-                              aria-label="Edit record"
-                            >
-                              <Pencil className="size-3.5" />
-                            </Button>
+                            {!row.isPending && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="size-7 text-muted-foreground"
+                                onClick={() => openEditRecord(row)}
+                                aria-label="Edit record"
+                              >
+                                <Pencil className="size-3.5" />
+                              </Button>
+                            )}
                             <Button
                               variant="ghost"
                               size="icon"
                               className="size-7 text-muted-foreground hover:text-destructive"
-                              onClick={() => setPendingDelete(record)}
-                              aria-label="Delete record"
+                              onClick={() => setPendingDelete(row)}
+                              aria-label={row.isPending ? "Discard offline record" : "Delete record"}
                             >
                               <Trash2 className="size-3.5" />
                             </Button>
@@ -624,7 +807,7 @@ export default function Dashboard() {
 
         <p className="mt-6 text-center text-xs text-muted-foreground">
           Signed in{user?.name ? ` as ${user.name}` : ""} · One record per store per day —
-          saving again updates it.
+          saving again updates it · Offline saves sync automatically
         </p>
       </main>
 
@@ -646,11 +829,15 @@ export default function Dashboard() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete this record?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {pendingDelete?.isPending ? "Discard offline record?" : "Delete this record?"}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              {pendingDelete &&
-                `${storeNames[pendingDelete.storeId] ?? "This store"} — ${dateKeyLabel(pendingDelete.date)}`}{" "}
-              will be permanently removed.
+              {pendingDelete?.isPending
+                ? "This unsynced record will be removed from this device and never uploaded."
+                : pendingDelete &&
+                  `${storeNames[pendingDelete.storeId] ?? "This store"} — ${dateKeyLabel(pendingDelete.date)}`}{" "}
+              This cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -664,7 +851,7 @@ export default function Dashboard() {
               }}
             >
               {deleting && <Loader2 className="size-4 animate-spin" />}
-              Delete record
+              {pendingDelete?.isPending ? "Discard" : "Delete record"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

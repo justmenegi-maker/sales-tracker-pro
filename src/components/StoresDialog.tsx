@@ -1,5 +1,6 @@
 import { api } from "@/convex/_generated/api";
 import type { Doc } from "@/convex/_generated/dataModel";
+import { useIsOnline } from "@/lib/offline";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -19,7 +20,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
-import { Check, Loader2, Pencil, Plus, Store, Trash2, X } from "lucide-react";
+import { Check, CloudOff, Loader2, Pencil, Plus, Store, Trash2, X } from "lucide-react";
 import { useMutation } from "convex/react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -36,6 +37,7 @@ export function StoresDialog({
   const create = useMutation(api.stores.create);
   const rename = useMutation(api.stores.rename);
   const remove = useMutation(api.stores.remove);
+  const isOnline = useIsOnline();
 
   const [newName, setNewName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -101,15 +103,29 @@ export function StoresDialog({
             </DialogDescription>
           </DialogHeader>
 
+          {!isOnline && (
+            <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-400">
+              <CloudOff className="size-3.5 shrink-0" />
+              <span>
+                You&apos;re offline — store changes need a connection. Sales records can
+                still be saved.
+              </span>
+            </div>
+          )}
+
           <form onSubmit={handleCreate} className="flex gap-2">
             <Input
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               placeholder="e.g. Downtown flagship"
               maxLength={60}
-              disabled={busy}
+              disabled={busy || !isOnline}
             />
-            <Button type="submit" disabled={busy || !newName.trim()} className="shrink-0">
+            <Button
+              type="submit"
+              disabled={busy || !isOnline || !newName.trim()}
+              className="shrink-0"
+            >
               {busy ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
               Add
             </Button>
@@ -152,6 +168,7 @@ export function StoresDialog({
                         size="icon"
                         variant="ghost"
                         className="size-8 shrink-0 text-primary"
+                        disabled={!isOnline}
                         onClick={() => void handleRename(store)}
                       >
                         <Check className="size-4" />
@@ -179,6 +196,7 @@ export function StoresDialog({
                         size="icon"
                         variant="ghost"
                         className="size-8 shrink-0 text-muted-foreground"
+                        disabled={!isOnline}
                         onClick={() => {
                           setEditingId(store._id);
                           setEditingName(store.name);
@@ -192,6 +210,7 @@ export function StoresDialog({
                         size="icon"
                         variant="ghost"
                         className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
+                        disabled={!isOnline}
                         onClick={() => setPendingDelete(store)}
                         aria-label={`Delete ${store.name}`}
                       >
