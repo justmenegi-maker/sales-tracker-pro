@@ -38,6 +38,7 @@ import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
+  Coins,
   CreditCard,
   Landmark,
   Loader2,
@@ -256,7 +257,8 @@ export default function Dashboard() {
                 );
               }}
             >
-              <SelectTrigger size="sm" className="w-[92px]" aria-label="Currency">
+              <SelectTrigger size="sm" className="w-[110px]" aria-label="Currency">
+                <Coins className="size-3.5 text-muted-foreground" />
                 <SelectValue />
               </SelectTrigger>
               <SelectContent align="end">
