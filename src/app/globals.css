@@ -1,47 +1,182 @@
+@import "tailwindcss";
+
+/*
+  SK Tapri theme — "ledger paper".
+  Warm paper background, deep teal ink, amber accents and serif headings so the
+  app reads like a shop cash-book rather than a generic SaaS dashboard.
+*/
 :root {
-  --background: oklch(0.99 0.002 260);
-  --foreground: oklch(0.16 0.015 260);
+  --background: oklch(0.985 0.007 90);
+  --foreground: oklch(0.24 0.02 250);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.16 0.015 260);
+  --card-foreground: oklch(0.24 0.02 250);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.16 0.015 260);
-  --primary: oklch(0.51 0.2 260);
-  --primary-foreground: oklch(0.99 0.004 260);
-  --secondary: oklch(0.96 0.005 260);
-  --secondary-foreground: oklch(0.2 0.01 260);
-  --muted: oklch(0.96 0.005 260);
-  --muted-foreground: oklch(0.45 0.01 260);
-  --accent: oklch(0.95 0.01 260);
-  --accent-foreground: oklch(0.35 0.12 260);
-  --destructive: oklch(0.58 0.22 25);
-  --border: oklch(0.91 0.006 260);
-  --input: oklch(0.91 0.007 260);
-  --ring: oklch(0.51 0.2 260);
+  --popover-foreground: oklch(0.24 0.02 250);
+  --primary: oklch(0.42 0.078 178);
+  --primary-foreground: oklch(0.985 0.012 90);
+  --secondary: oklch(0.955 0.024 85);
+  --secondary-foreground: oklch(0.31 0.03 70);
+  --muted: oklch(0.958 0.012 90);
+  --muted-foreground: oklch(0.5 0.022 250);
+  --accent: oklch(0.94 0.045 82);
+  --accent-foreground: oklch(0.34 0.06 65);
+  --destructive: oklch(0.55 0.19 27);
+  --destructive-foreground: oklch(0.99 0.01 27);
+  --border: oklch(0.9 0.016 90);
+  --input: oklch(0.88 0.016 90);
+  --ring: oklch(0.42 0.078 178);
+  --radius: 0.65rem;
+
+  --chart-1: oklch(0.42 0.078 178);
+  --chart-2: oklch(0.72 0.13 72);
+  --chart-3: oklch(0.55 0.11 250);
+  --chart-4: oklch(0.62 0.15 20);
+  --chart-5: oklch(0.6 0.09 140);
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
-    Helvetica, Arial, sans-serif;
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --font-display: ui-serif, Georgia, Cambria, "Times New Roman", serif;
+
+  --animate-drift: drift 16s ease-in-out infinite;
+  --animate-rise: rise 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-::selection {
-  background: var(--ring);
-  color: var(--primary-foreground);
+@keyframes drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(0, -18px, 0) scale(1.04);
+  }
 }
 
-::-webkit-scrollbar {
-  width: 12px;
-  height: 12px;
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 14px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
-::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 9999px;
-  border: 2px solid var(--background);
+@layer base {
+  *,
+  ::before,
+  ::after {
+    border-color: var(--border);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+      Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    letter-spacing: -0.01em;
+  }
+
+  ::selection {
+    background: var(--ring);
+    color: var(--primary-foreground);
+  }
+
+  ::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 9999px;
+    border: 2px solid var(--background);
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--muted-foreground);
+  }
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: var(--muted-foreground);
+@layer utilities {
+  /* Cash-book ruled lines. */
+  .ledger-rules {
+    background-image: repeating-linear-gradient(
+      to bottom,
+      transparent 0 31px,
+      color-mix(in oklch, var(--border) 70%, transparent) 31px 32px
+    );
+  }
+
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+
+  .paper-grid {
+    background-image:
+      linear-gradient(
+        to right,
+        color-mix(in oklch, var(--border) 55%, transparent) 1px,
+        transparent 1px
+      ),
+      linear-gradient(
+        to bottom,
+        color-mix(in oklch, var(--border) 55%, transparent) 1px,
+        transparent 1px
+      );
+    background-size: 32px 32px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

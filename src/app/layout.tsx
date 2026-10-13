@@ -1,4 +1,6 @@
+import { Suspense } from "react";
 import type { Metadata, Viewport } from "next";
+import { AppStoreProvider } from "@/lib/store";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -16,12 +18,27 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+    { media: "(prefers-color-scheme: light)", color: "#fbfaf6" },
     { media: "(prefers-color-scheme: dark)", color: "#0a0a0a" },
   ],
   width: "device-width",
   initialScale: 1,
 };
+
+function LayoutInner({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en" className="h-full">
+      <body className={cn("h-full bg-background text-foreground antialiased")}>
+        <TooltipProvider delayDuration={300}>
+          <AppStoreProvider>
+            {children}
+            <Toaster position="bottom-center" richColors />
+          </AppStoreProvider>
+        </TooltipProvider>
+      </body>
+    </html>
+  );
+}
 
 export default function RootLayout({
   children,
@@ -29,13 +46,8 @@ export default function RootLayout({
   children: ReactNode;
 }) {
   return (
-    <html lang="en" className="h-full">
-      <body className={cn("h-full bg-background text-foreground antialiased")}>
-        <TooltipProvider delayDuration={300}>
-          {children}
-          <Toaster position="bottom-center" richColors />
-        </TooltipProvider>
-      </body>
-    </html>
+    <Suspense fallback={<div className="p-24 text-center">Loading…</div>}>
+      <LayoutInner>{children}</LayoutInner>
+    </Suspense>
   );
 }

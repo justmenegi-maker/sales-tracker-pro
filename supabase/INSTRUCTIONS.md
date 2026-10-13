@@ -30,6 +30,8 @@ Never commit real keys. `supabase/env.local` and `.env.local` are ignored.
 ## 4. Run migrations
 - Open the Supabase SQL Editor.
 - Run the migrations in `supabase/migrations/` in filename order.
+- 004 adds read access to branch names for signed-in users, which the daily
+  report form needs to label the branch.
 - Run the seed in `supabase/seed.sql` if you want sample branches and admin.
 
 ## 5. Verify row-level security
@@ -42,3 +44,10 @@ Never commit real keys. `supabase/env.local` and `.env.local` are ignored.
 - Use it only in server-only code paths such as the admin branch-user creation
   route.
 - Do not expose it to the browser or to client components.
+
+## 7. Before the keys are set
+The app runs in demo mode until `NEXT_PUBLIC_SUPABASE_URL` and
+`NEXT_PUBLIC_SUPABASE_ANON_KEY` exist: two sample branches, three weeks of
+reports and a debt ledger, kept in the browser's localStorage. Add the two keys
+to the workspace environment and the same screens switch to live data with no
+code change.

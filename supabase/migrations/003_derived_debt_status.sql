@@ -2,6 +2,8 @@
 -- Debt status is derived from payments in application logic.
 -- This trigger is a lightweight guard to keep status consistent when
 -- payments are inserted or deleted.
+--
+-- Payments are never soft-deleted in this schema, so every payment row counts.
 
 create or replace function sync_debt_status_from_payments() returns trigger language plpgsql as $$
 declare
@@ -14,7 +16,7 @@ begin
       d.amount_paise
     into total_paid, debt_total
     from debts d
-    left join debt_payments dp on dp.debt_id = d.id and not dp.deleted_at is not null
+    left join debt_payments dp on dp.debt_id = d.id
     where d.id = coalesce(new.debt_id, old.debt_id);
 
     if debt_total is null then
@@ -36,7 +38,7 @@ begin
       d.amount_paise
     into total_paid, debt_total
     from debts d
-    left join debt_payments dp on dp.debt_id = d.id and not dp.deleted_at is not null
+    left join debt_payments dp on dp.debt_id = d.id
     where d.id = old.debt_id;
 
     if debt_total is null then
