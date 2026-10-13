@@ -4,10 +4,15 @@ import {
   debtPaidPaise,
   deriveDebtStatus,
   reportFinanceCount,
-  reportHasDebt,
   reportTotalPaise,
   reportsForDate,
+  reviewCounts,
   sectionTotals,
+  summarizeReports,
+  totalsByBranchDate,
+  totalsByDate,
+  trendSeries,
+  withinRange,
 } from "./report";
 import type { DailyReport, Debt } from "./report";
 
@@ -32,6 +37,10 @@ function report(overrides: Partial<DailyReport> = {}): DailyReport {
     status: "active",
     voidReason: null,
     createdAt: "2026-10-13T14:20:00.000Z",
+    reviewStatus: "pending",
+    reviewNote: null,
+    reviewedByName: null,
+    reviewedAt: null,
     ...overrides,
   };
 }
@@ -76,11 +85,10 @@ describe("sectionTotals", () => {
   });
 });
 
-describe("report flags", () => {
-  it("counts finance rows and detects debt", () => {
+describe("reportFinanceCount", () => {
+  it("counts the finance rows on a report", () => {
     expect(reportFinanceCount(report())).toBe(2);
-    expect(reportHasDebt(report())).toBe(true);
-    expect(reportHasDebt(report({ lines: [] }))).toBe(false);
+    expect(reportFinanceCount(report({ lines: [] }))).toBe(0);
   });
 });
 
@@ -98,6 +106,68 @@ describe("reportsForDate", () => {
     );
 
     expect(result.map((item) => item.id)).toEqual(["a"]);
+  });
+});
+
+describe("summarizeReports", () => {
+  it("precomputes the total, sections and flags once per report", () => {
+    const [summary] = summarizeReports([report()]);
+
+    expect(summary.totalPaise).toBe(7212000);
+    expect(summary.sections.finance).toBe(1550000);
+    expect(summary.financeCount).toBe(2);
+    expect(summary.hasDebt).toBe(true);
+    expect(summary.totalPaise).toBe(reportTotalPaise(summary.report));
+  });
+
+  it("totals by date, by branch and across a range", () => {
+    const summaries = summarizeReports([
+      report({ id: "a", reportDate: "2026-10-13" }),
+      report({ id: "b", reportDate: "2026-10-13", cashPaise: 0, onlinePaise: 0, lines: [] }),
+      report({
+        id: "c",
+        reportDate: "2026-10-11",
+        branchId: "branch_spillow",
+        cashPaise: 100000,
+        onlinePaise: 0,
+        lines: [],
+      }),
+    ]);
+
+    const byDate = totalsByDate(summaries);
+    expect(byDate.get("2026-10-13")).toBe(7212000);
+    expect(byDate.get("2026-10-11")).toBe(100000);
+    expect(byDate.get("2026-10-12")).toBeUndefined();
+
+    const byBranch = totalsByBranchDate(summaries);
+    expect(byBranch.get("branch_kaza")?.get("2026-10-13")).toBe(7212000);
+    expect(byBranch.get("branch_spillow")?.get("2026-10-11")).toBe(100000);
+
+    expect(withinRange(summaries, "2026-10-12", "2026-10-13")).toHaveLength(2);
+    expect(withinRange(summaries, "2026-01-01", "2026-01-02")).toHaveLength(0);
+  });
+
+  it("builds trend points from the date map, filling empty days with zero", () => {
+    const summaries = summarizeReports([report({ reportDate: "2026-10-13" })]);
+    const points = trendSeries(totalsByDate(summaries), 3, "2026-10-13");
+
+    expect(points).toHaveLength(3);
+    expect(points[2].value).toBe(7212000);
+    expect(points[0].value).toBe(0);
+    expect(points.map((point) => point.label)).toEqual(["Sun", "Mon", "Tue"]);
+  });
+});
+
+describe("reviewCounts", () => {
+  it("tallies pending, ok and flagged reports", () => {
+    const counts = reviewCounts([
+      report({ id: "a" }),
+      report({ id: "b", reviewStatus: "ok" }),
+      report({ id: "c", reviewStatus: "concern", reviewNote: "cash low" }),
+      report({ id: "d", reviewStatus: "concern", reviewNote: "duplicate row" }),
+    ]);
+
+    expect(counts).toEqual({ pending: 1, ok: 1, concern: 2 });
   });
 });
 

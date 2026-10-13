@@ -8,18 +8,19 @@ import { TrendChart } from "@/components/trend-chart";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatTile } from "@/components/ui/stat-tile";
+import { addDays, formatDateLabel, formatINRWhole, todayISO } from "@/lib/format";
 import {
-  addDays,
-  formatDateLabel,
-  formatINRWhole,
-  formatWeekdayShort,
-  todayISO,
-} from "@/lib/format";
-import {
+  REVIEW_META,
   debtOutstandingPaise,
   deriveDebtStatus,
-  reportTotalPaise,
+  reviewCounts,
+  summarizeReports,
+  totalsByBranchDate,
+  totalsByDate,
+  trendSeries,
+  withinRange,
 } from "@/lib/report";
+import type { ReviewStatus } from "@/lib/report";
 import { useAppStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -29,90 +30,101 @@ function AdminBody() {
   const { branches, reports, debts } = useAppStore();
   const [days, setDays] = useState(14);
   const [branchFilter, setBranchFilter] = useState<string>("all");
+  const [reviewFilter, setReviewFilter] = useState<"all" | ReviewStatus>("all");
 
   const today = todayISO();
   const rangeStart = addDays(today, -(days - 1));
 
-  const activeReports = useMemo(
-    () => reports.filter((report) => report.status === "active"),
-    [reports],
-  );
+  // Totals are summed once per data change, not per tile, row and trend point.
+  const summaries = useMemo(() => summarizeReports(reports), [reports]);
 
-  // Date range across every branch — the per-branch cards always use this, so a
-  // branch filter never blanks out the other branches' numbers.
-  const rangeReports = useMemo(
-    () =>
-      activeReports.filter(
-        (report) => report.reportDate >= rangeStart && report.reportDate <= today,
-      ),
-    [activeReports, rangeStart, today],
+  const rangeAll = useMemo(
+    () => withinRange(summaries, rangeStart, today),
+    [rangeStart, summaries, today],
   );
 
   const inRange = useMemo(
     () =>
-      rangeReports.filter(
-        (report) => branchFilter === "all" || report.branchId === branchFilter,
-      ),
-    [branchFilter, rangeReports],
+      branchFilter === "all"
+        ? rangeAll
+        : rangeAll.filter((summary) => summary.report.branchId === branchFilter),
+    [branchFilter, rangeAll],
   );
 
-  const rangeTotal = inRange.reduce(
-    (sum, report) => sum + reportTotalPaise(report),
-    0,
+  const rangeTotal = useMemo(
+    () => inRange.reduce((sum, summary) => sum + summary.totalPaise, 0),
+    [inRange],
+  );
+
+  const review = useMemo(
+    () => reviewCounts(inRange.map((summary) => summary.report)),
+    [inRange],
   );
 
   const trend = useMemo(
-    () =>
-      Array.from({ length: days }, (_, index) => {
-        const date = addDays(today, -(days - 1 - index));
-        const value = inRange
-          .filter((report) => report.reportDate === date)
-          .reduce((sum, report) => sum + reportTotalPaise(report), 0);
-        return { label: formatWeekdayShort(date), value };
-      }),
+    () => trendSeries(totalsByDate(inRange), days, today),
     [days, inRange, today],
   );
 
-  const perBranch = useMemo(
-    () =>
-      branches.map((branch) => {
-        const branchReportsInRange = rangeReports.filter(
-          (report) => report.branchId === branch.id,
-        );
-        const filedDays = new Set(
-          branchReportsInRange.map((report) => report.reportDate),
-        );
-        const branchDebts = debts.filter(
-          (debt) => !debt.voided && debt.branchId === branch.id,
-        );
-        const lastFiled = activeReports
-          .filter((report) => report.branchId === branch.id)
-          .sort((a, b) => (a.reportDate < b.reportDate ? 1 : -1))[0];
+  const perBranch = useMemo(() => {
+    const totalsByBranch = totalsByBranchDate(rangeAll);
+    const datesByBranch = new Map<string, Set<string>>();
+    for (const summary of rangeAll) {
+      const dates = datesByBranch.get(summary.report.branchId) ?? new Set();
+      dates.add(summary.report.reportDate);
+      datesByBranch.set(summary.report.branchId, dates);
+    }
 
-        return {
-          branch,
-          total: branchReportsInRange.reduce(
-            (sum, report) => sum + reportTotalPaise(report),
-            0,
-          ),
-          reports: branchReportsInRange.length,
-          missing: days - filedDays.size,
-          outstanding: branchDebts
-            .filter((debt) => deriveDebtStatus(debt) !== "cleared")
-            .reduce((sum, debt) => sum + debtOutstandingPaise(debt), 0),
-          lastFiledDate: lastFiled?.reportDate ?? null,
-        };
-      }),
-    [activeReports, branches, days, debts, rangeReports],
+    return branches.map((branch) => {
+      const byDate = totalsByBranch.get(branch.id);
+      const branchDebts = debts.filter(
+        (debt) => !debt.voided && debt.branchId === branch.id,
+      );
+      const lastFiled = summaries
+        .filter(
+          (summary) =>
+            summary.report.branchId === branch.id &&
+            summary.report.status === "active",
+        )
+        .reduce<string | null>(
+          (latest, summary) =>
+            !latest || summary.report.reportDate > latest
+              ? summary.report.reportDate
+              : latest,
+          null,
+        );
+
+      return {
+        branch,
+        total: byDate ? [...byDate.values()].reduce((sum, v) => sum + v, 0) : 0,
+        reports: (datesByBranch.get(branch.id) ?? new Set()).size,
+        outstanding: branchDebts
+          .filter((debt) => deriveDebtStatus(debt) !== "cleared")
+          .reduce((sum, debt) => sum + debtOutstandingPaise(debt), 0),
+        lastFiledDate: lastFiled,
+      };
+    });
+  }, [branches, debts, rangeAll, summaries]);
+
+  const visibleBranches = perBranch.filter(
+    (row) => branchFilter === "all" || row.branch.id === branchFilter,
+  );
+  const missingDays = visibleBranches.reduce(
+    (sum, row) => sum + (days - row.reports),
+    0,
   );
 
-  const missingDays = perBranch
-    .filter((row) => branchFilter === "all" || row.branch.id === branchFilter)
-    .reduce((sum, row) => sum + row.missing, 0);
-
-  const outstandingAll = perBranch
-    .filter((row) => branchFilter === "all" || row.branch.id === branchFilter)
-    .reduce((sum, row) => sum + row.outstanding, 0);
+  const tableSummaries = useMemo(() => {
+    const filtered =
+      reviewFilter === "all"
+        ? inRange
+        : inRange.filter(
+            (summary) => summary.report.reviewStatus === reviewFilter,
+          );
+    return [...filtered].sort((a, b) =>
+      a.report.reportDate < b.report.reportDate ? 1 : -1,
+    );
+  }, [inRange, reviewFilter]);
 
   return (
     <AppShell
@@ -168,21 +180,21 @@ function AdminBody() {
             tone="primary"
           />
           <StatTile
+            label="Needs review"
+            value={String(review.pending)}
+            hint="Waiting for an admin check"
+            tone={review.pending > 0 ? "accent" : "default"}
+          />
+          <StatTile
+            label="Flagged concerns"
+            value={String(review.concern)}
+            hint={`${review.ok} ticked OK`}
+            tone={review.concern > 0 ? "warning" : "default"}
+          />
+          <StatTile
             label="Missing branch days"
             value={String(missingDays)}
-            hint={`${branches.length} branches × ${days} days`}
-            tone={missingDays > 0 ? "accent" : "default"}
-          />
-          <StatTile
-            label="Debt outstanding"
-            value={formatINRWhole(outstandingAll)}
-            hint="Open + partially paid"
-            tone={outstandingAll > 0 ? "warning" : "default"}
-          />
-          <StatTile
-            label="Average per day"
-            value={formatINRWhole(Math.round(rangeTotal / days))}
-            hint="Across the selected range"
+            hint={`${visibleBranches.length} branches × ${days} days`}
           />
         </div>
 
@@ -199,11 +211,9 @@ function AdminBody() {
           {perBranch.map((row) => {
             const selected =
               branchFilter === "all" || branchFilter === row.branch.id;
+            const missing = days - row.reports;
             return (
-              <Card
-                key={row.branch.id}
-                className={cn(!selected && "opacity-50")}
-              >
+              <Card key={row.branch.id} className={cn(!selected && "opacity-50")}>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-lg">{row.branch.name}</CardTitle>
                 </CardHeader>
@@ -243,10 +253,10 @@ function AdminBody() {
                         : "Never"}
                     </p>
                   </div>
-                  {row.missing > 0 ? (
+                  {missing > 0 ? (
                     <p className="col-span-2 rounded-md border border-accent-foreground/25 bg-accent/40 px-3 py-2 text-xs">
-                      {row.missing} day{row.missing > 1 ? "s" : ""} without a
-                      report in this range.
+                      {missing} day{missing > 1 ? "s" : ""} without a report in
+                      this range.
                     </p>
                   ) : null}
                 </CardContent>
@@ -255,15 +265,41 @@ function AdminBody() {
           })}
         </div>
 
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
+            Review
+          </span>
+          <Button
+            size="sm"
+            variant={reviewFilter === "all" ? "default" : "outline"}
+            onClick={() => setReviewFilter("all")}
+          >
+            All
+          </Button>
+          {REVIEW_META.map((meta) => (
+            <Button
+              key={meta.key}
+              size="sm"
+              variant={reviewFilter === meta.key ? "default" : "outline"}
+              onClick={() => setReviewFilter(meta.key)}
+            >
+              {meta.label}
+            </Button>
+          ))}
+        </div>
+
         <ReportsTable
-          reports={[...inRange].sort((a, b) =>
-            a.reportDate < b.reportDate ? 1 : -1,
-          )}
+          summaries={tableSummaries}
           title="Reports in range"
           showBranch
+          canReview
           canVoid
-          limit={40}
-          emptyHint="No reports filed in this range for the selected branches."
+          limit={25}
+          emptyHint={
+            reviewFilter === "all"
+              ? "No reports filed in this range for the selected branches."
+              : "Nothing matches this review filter in the selected range."
+          }
         />
       </div>
     </AppShell>

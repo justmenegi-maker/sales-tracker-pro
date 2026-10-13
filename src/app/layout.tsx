@@ -2,7 +2,6 @@ import { Suspense } from "react";
 import type { Metadata, Viewport } from "next";
 import { AppStoreProvider } from "@/lib/store";
 import { Toaster } from "@/components/ui/sonner";
-import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import "./globals.css";
 import type { ReactNode } from "react";
@@ -29,12 +28,10 @@ function LayoutInner({ children }: { children: ReactNode }) {
   return (
     <html lang="en" className="h-full">
       <body className={cn("h-full bg-background text-foreground antialiased")}>
-        <TooltipProvider delayDuration={300}>
-          <AppStoreProvider>
-            {children}
-            <Toaster position="bottom-center" richColors />
-          </AppStoreProvider>
-        </TooltipProvider>
+        <AppStoreProvider>
+          {children}
+          <Toaster position="bottom-center" richColors />
+        </AppStoreProvider>
       </body>
     </html>
   );

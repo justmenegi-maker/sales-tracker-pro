@@ -9,6 +9,7 @@
  * The client can always recompute a total from a report, and does so through
  * `lib/totals.ts` so the arithmetic lives in exactly one place.
  */
+import { formatWeekdayShort } from "./format";
 import { computeTotalSale } from "./totals";
 import type { ReportSection } from "./totals";
 
@@ -35,6 +36,9 @@ export type Branch = {
   isActive: boolean;
 };
 
+/** Admin review of a filed report. */
+export type ReviewStatus = "pending" | "ok" | "concern";
+
 export type DailyReport = {
   id: string;
   branchId: string;
@@ -48,6 +52,10 @@ export type DailyReport = {
   status: "active" | "voided";
   voidReason: string | null;
   createdAt: string;
+  reviewStatus: ReviewStatus;
+  reviewNote: string | null;
+  reviewedByName: string | null;
+  reviewedAt: string | null;
 };
 
 export type DebtPayment = {
@@ -141,10 +149,6 @@ export function reportFinanceCount(report: DailyReport): number {
   return report.lines.filter((line) => line.category === "finance").length;
 }
 
-export function reportHasDebt(report: DailyReport): boolean {
-  return report.lines.some((line) => line.category === "debt");
-}
-
 export function debtPaidPaise(debt: Debt): number {
   return debt.payments.reduce((sum, payment) => sum + payment.amountPaise, 0);
 }
@@ -161,24 +165,6 @@ export function deriveDebtStatus(debt: Debt): DebtStatus {
   return "open";
 }
 
-export function findBranch(
-  branches: Branch[],
-  branchId: string | null | undefined,
-): Branch | undefined {
-  if (!branchId) return undefined;
-  return branches.find((branch) => branch.id === branchId);
-}
-
-/** Active (non-voided) reports for one branch, newest first. */
-export function branchReports(
-  reports: DailyReport[],
-  branchId: string,
-): DailyReport[] {
-  return reports
-    .filter((report) => report.branchId === branchId && report.status === "active")
-    .sort((a, b) => (a.reportDate < b.reportDate ? 1 : -1));
-}
-
 /** Reports for one branch + date, newest first. */
 export function reportsForDate(
   reports: DailyReport[],
@@ -190,5 +176,120 @@ export function reportsForDate(
       report.branchId === branchId &&
       report.reportDate === reportDate &&
       report.status === "active",
+  );
+}
+
+export const REVIEW_META: Array<{
+  key: ReviewStatus;
+  label: string;
+  hint: string;
+}> = [
+  { key: "pending", label: "Needs review", hint: "No admin has checked this yet" },
+  { key: "ok", label: "OK", hint: "Checked and accepted" },
+  { key: "concern", label: "Concern", hint: "Flagged for follow-up" },
+];
+
+export function reviewLabel(status: ReviewStatus): string {
+  return REVIEW_META.find((meta) => meta.key === status)?.label ?? "Needs review";
+}
+
+export function reviewCounts(
+  reports: DailyReport[],
+): Record<ReviewStatus, number> {
+  const counts: Record<ReviewStatus, number> = { pending: 0, ok: 0, concern: 0 };
+  for (const report of reports) counts[report.reviewStatus] += 1;
+  return counts;
+}
+
+/**
+ * Everything the UI needs about one report, computed once per data change.
+ *
+ * Totals are derived from the lines, so summing them inside a render pass would
+ * repeat the same work for every table row, tile and trend point.
+ */
+export type ReportSummary = {
+  report: DailyReport;
+  totalPaise: number;
+  sections: Record<SectionKey, number>;
+  financeCount: number;
+  hasDebt: boolean;
+};
+
+export function summarizeReports(reports: DailyReport[]): ReportSummary[] {
+  return reports.map((report) => {
+    const sections = sectionTotals(report);
+    return {
+      report,
+      totalPaise: computeTotalSale(sections),
+      sections,
+      financeCount: report.lines.filter((line) => line.category === "finance").length,
+      hasDebt: report.lines.some((line) => line.category === "debt"),
+    };
+  });
+}
+
+/** Date → Total Sale, so a trend never re-scans the report list per day. */
+export function totalsByDate(
+  summaries: ReportSummary[],
+): Map<string, number> {
+  const totals = new Map<string, number>();
+  for (const summary of summaries) {
+    const date = summary.report.reportDate;
+    totals.set(date, (totals.get(date) ?? 0) + summary.totalPaise);
+  }
+  return totals;
+}
+
+/** Branch → date → Total Sale, for per-branch trend lines. */
+export function totalsByBranchDate(
+  summaries: ReportSummary[],
+): Map<string, Map<string, number>> {
+  const totals = new Map<string, Map<string, number>>();
+  for (const summary of summaries) {
+    const branchId = summary.report.branchId;
+    const byDate = totals.get(branchId) ?? new Map<string, number>();
+    const date = summary.report.reportDate;
+    byDate.set(date, (byDate.get(date) ?? 0) + summary.totalPaise);
+    totals.set(branchId, byDate);
+  }
+  return totals;
+}
+
+/**
+ * `days` trend points ending on `endDate`, read from a prebuilt date map.
+ *
+ * The date cursor is advanced in UTC rather than re-parsing a date string per
+ * point, and weekday labels are memoised in `format.ts`, so a re-render does no
+ * date parsing or Intl work beyond the first look at each day.
+ */
+export function trendSeries(
+  totals: Map<string, number>,
+  days: number,
+  endDate: string,
+): Array<{ label: string; value: number }> {
+  const [year, month, day] = endDate.split("-").map(Number);
+  const cursor = new Date(
+    Date.UTC(year, month - 1, day) - (days - 1) * 86_400_000,
+  );
+  const points: Array<{ label: string; value: number }> = [];
+
+  for (let index = 0; index < days; index += 1) {
+    const date = cursor.toISOString().slice(0, 10);
+    points.push({ label: formatWeekdayShort(date), value: totals.get(date) ?? 0 });
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+
+  return points;
+}
+
+/** Keeps only the reports inside an inclusive date range. */
+export function withinRange(
+  summaries: ReportSummary[],
+  startDate: string,
+  endDate: string,
+): ReportSummary[] {
+  return summaries.filter(
+    (summary) =>
+      summary.report.reportDate >= startDate && summary.report.reportDate <= endDate,
   );
 }

@@ -21,17 +21,13 @@
   --accent: oklch(0.94 0.045 82);
   --accent-foreground: oklch(0.34 0.06 65);
   --destructive: oklch(0.55 0.19 27);
-  --destructive-foreground: oklch(0.99 0.01 27);
   --border: oklch(0.9 0.016 90);
   --input: oklch(0.88 0.016 90);
   --ring: oklch(0.42 0.078 178);
   --radius: 0.65rem;
 
+  /* Trend chart ink, drawn directly in SVG. */
   --chart-1: oklch(0.42 0.078 178);
-  --chart-2: oklch(0.72 0.13 72);
-  --chart-3: oklch(0.55 0.11 250);
-  --chart-4: oklch(0.62 0.15 20);
-  --chart-5: oklch(0.6 0.09 140);
 }
 
 @theme inline {
@@ -50,20 +46,13 @@
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
-  --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --color-chart-1: var(--chart-1);
-  --color-chart-2: var(--chart-2);
-  --color-chart-3: var(--chart-3);
-  --color-chart-4: var(--chart-4);
-  --color-chart-5: var(--chart-5);
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
 
   --font-display: ui-serif, Georgia, Cambria, "Times New Roman", serif;
 

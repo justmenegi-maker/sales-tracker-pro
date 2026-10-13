@@ -1,27 +1,27 @@
 import { describe, it, expect } from "vitest";
 import {
   toPaise,
-  fromPaise,
   isNonNegativePaise,
   assertNonNegativePaise,
   paiseSum,
-  ZERO_PAISE,
 } from "./money";
 
-describe("toPaise/fromPaise", () => {
-  it("round-trips whole rupees exactly", () => {
-    expect(fromPaise(toPaise(1250), "INR")).toBe(1250);
+describe("toPaise", () => {
+  it("converts whole rupees exactly", () => {
+    expect(toPaise(1250)).toBe(125000);
   });
 
   it("handles fractional rupees without float drift in storage", () => {
-    const paise = toPaise(1250.55, "INR");
-    expect(paise).toBe(125055);
-    expect(fromPaise(paise, "INR")).toBe(1250.55);
+    expect(toPaise(1250.55)).toBe(125055);
   });
 
-  it("rounds .005 paise correctly", () => {
-    expect(toPaise(0.005, "INR")).toBe(1);
-    expect(toPaise(0.004, "INR")).toBe(0);
+  it("rounds sub-paise fractions", () => {
+    expect(toPaise(0.005)).toBe(1);
+    expect(toPaise(0.004)).toBe(0);
+  });
+
+  it("rejects an unknown currency", () => {
+    expect(() => toPaise(10, "XYZ")).toThrow(/Unsupported currency factor/);
   });
 });
 
@@ -71,12 +71,5 @@ describe("paiseSum", () => {
 
   it("rejects a negative section inside a sum", () => {
     expect(() => paiseSum([100, -5])).toThrow(/sum value/);
-  });
-});
-
-describe("ZERO_PAISE constant", () => {
-  it("is a non-negative integer paise value", () => {
-    expect(ZERO_PAISE).toBe(0);
-    expect(isNonNegativePaise(ZERO_PAISE)).toBe(true);
   });
 });

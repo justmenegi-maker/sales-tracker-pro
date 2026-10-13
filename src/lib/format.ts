@@ -81,14 +81,26 @@ export function formatDateLabel(isoDate: string): string {
   }).format(new Date(Date.UTC(year, month - 1, day)));
 }
 
+const weekdayFormat = new Intl.DateTimeFormat("en-IN", {
+  weekday: "short",
+  timeZone: "UTC",
+});
+
+// Trend charts ask for the same handful of days on every render, and Intl
+// formatting is the expensive part, so keep the labels.
+const weekdayLabels = new Map<string, string>();
+
 /** "Mon" from yyyy-mm-dd. */
 export function formatWeekdayShort(isoDate: string): string {
+  const cached = weekdayLabels.get(isoDate);
+  if (cached !== undefined) return cached;
+
   const [year, month, day] = isoDate.split("-").map(Number);
   if (!year || !month || !day) return "";
-  return new Intl.DateTimeFormat("en-IN", {
-    weekday: "short",
-    timeZone: "UTC",
-  }).format(new Date(Date.UTC(year, month - 1, day)));
+
+  const label = weekdayFormat.format(new Date(Date.UTC(year, month - 1, day)));
+  weekdayLabels.set(isoDate, label);
+  return label;
 }
 
 /** Shift a yyyy-mm-dd date by whole days. */

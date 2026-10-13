@@ -28,6 +28,33 @@ describe("demo workspace", () => {
       expect(report.reportDate >= firstDay && report.reportDate <= today).toBe(true);
       expect(reportTotalPaise(report)).toBeGreaterThan(0);
       expect(report.status).toBe("active");
+      expect(["pending", "ok", "concern"]).toContain(report.reviewStatus);
+    }
+  });
+
+  it("leaves the two most recent days pending and reviews the backlog", () => {
+    const reports = buildDemoReports();
+    const today = todayISO();
+    const yesterday = addDays(today, -1);
+
+    const recent = reports.filter(
+      (report) => report.reportDate >= yesterday,
+    );
+    expect(recent.length).toBeGreaterThan(0);
+    for (const report of recent) {
+      expect(report.reviewStatus).toBe("pending");
+    }
+
+    const older = reports.filter((report) => report.reportDate < yesterday);
+    const reviewed = older.filter((report) => report.reviewStatus !== "pending");
+    expect(reviewed.length).toBeGreaterThan(0);
+
+    for (const report of reviewed) {
+      expect(report.reviewedByName).toBeTruthy();
+      expect(report.reviewedAt).toBeTruthy();
+      if (report.reviewStatus === "concern") {
+        expect(report.reviewNote).toBeTruthy();
+      }
     }
   });
 

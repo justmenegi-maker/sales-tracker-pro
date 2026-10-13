@@ -28,13 +28,14 @@ import type {
   DailyReport,
   Debt,
   LineCategory,
+  ReviewStatus,
   SaveReportInput,
 } from "./report";
 import { computeTotalSale } from "./totals";
 
-export type Backend = "supabase" | "demo";
+type Backend = "supabase" | "demo";
 
-export type Session = {
+type Session = {
   id: string;
   email: string;
   displayName: string;
@@ -42,7 +43,7 @@ export type Session = {
   branchId: string | null;
 };
 
-export type ProfileRow = {
+type ProfileRow = {
   id: string;
   role: "admin" | "branch";
   branch_id: string | null;
@@ -64,6 +65,11 @@ type StoreValue = {
   signOut: () => Promise<void>;
   saveReport: (input: SaveReportInput) => Promise<boolean>;
   voidReport: (reportId: string, reason: string) => Promise<boolean>;
+  setReportReview: (
+    reportId: string,
+    status: ReviewStatus,
+    note: string,
+  ) => Promise<boolean>;
   recordDebtPayment: (
     debtId: string,
     amountPaise: number,
@@ -75,7 +81,6 @@ type StoreValue = {
     amountPaise: number;
     debtDate: string;
   }) => Promise<boolean>;
-  refresh: () => Promise<void>;
 };
 
 const DEMO_SESSION_KEY = "sktapri.session.v1";
@@ -102,6 +107,12 @@ function writeJSON(key: string, value: unknown): void {
   }
 }
 
+const REPORT_COLUMNS =
+  "id, branch_id, report_date, submitted_by, cash_paise, online_paise, status, void_reason, created_at, review_status, review_note, reviewed_by, reviewed_at, report_lines(id, category, label, amount_paise)";
+
+const REPORT_COLUMNS_LEGACY =
+  "id, branch_id, report_date, submitted_by, cash_paise, online_paise, status, void_reason, created_at, report_lines(id, category, label, amount_paise)";
+
 type SupabaseReportRow = {
   id: string;
   branch_id: string;
@@ -112,6 +123,11 @@ type SupabaseReportRow = {
   status: "active" | "voided";
   void_reason: string | null;
   created_at: string;
+  /** Absent on a project that has not run migration 005. */
+  review_status?: ReviewStatus | null;
+  review_note?: string | null;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
   report_lines: Array<{
     id: string;
     category: LineCategory;
@@ -170,25 +186,33 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
   const loadSupabase = useCallback(
     async (activeSession: Session, client: NonNullable<typeof supabase>) => {
-      const [branchResult, profileResult, reportResult, debtResult] =
-        await Promise.all([
-          client.from("branches").select("id, name, is_active").order("name"),
-          client.from("profiles").select("id, display_name"),
-          client
-            .from("daily_reports")
-            .select(
-              "id, branch_id, report_date, submitted_by, cash_paise, online_paise, status, void_reason, created_at, report_lines(id, category, label, amount_paise)",
-            )
-            .order("report_date", { ascending: false })
-            .limit(500),
-          client
-            .from("debts")
-            .select(
-              "id, branch_id, product_name, amount_paise, debt_date, source, voided, debt_payments(id, amount_paise, paid_on, note)",
-            )
-            .order("debt_date", { ascending: false })
-            .limit(500),
-        ]);
+      const [branchResult, profileResult, debtResult] = await Promise.all([
+        client.from("branches").select("id, name, is_active").order("name"),
+        client.from("profiles").select("id, display_name"),
+        client
+          .from("debts")
+          .select(
+            "id, branch_id, product_name, amount_paise, debt_date, source, voided, debt_payments(id, amount_paise, paid_on, note)",
+          )
+          .order("debt_date", { ascending: false })
+          .limit(500),
+      ]);
+
+      const reportQuery = (columns: string) =>
+        client
+          .from("daily_reports")
+          .select(columns)
+          .order("report_date", { ascending: false })
+          .limit(500);
+
+      let reportResult = await reportQuery(REPORT_COLUMNS);
+
+      // A project that has not run migration 005 yet has no review columns.
+      // Fall back to the original select so the workspace still opens, with
+      // every report treated as unreviewed.
+      if (reportResult.error?.code === "42703") {
+        reportResult = await reportQuery(REPORT_COLUMNS_LEGACY);
+      }
 
       const failure =
         branchResult.error ?? reportResult.error ?? debtResult.error ?? null;
@@ -241,6 +265,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           status: row.status,
           voidReason: row.void_reason,
           createdAt: row.created_at,
+          reviewStatus: row.review_status ?? "pending",
+          reviewNote: row.review_note ?? null,
+          reviewedByName: row.reviewed_by
+            ? (names.get(row.reviewed_by) ?? "Admin")
+            : null,
+          reviewedAt: row.reviewed_at ?? null,
         })),
       );
       setDebts(
@@ -343,11 +373,6 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     return () => data.subscription.unsubscribe();
   }, [resolveSupabaseSession, supabase]);
 
-  const refresh = useCallback(async () => {
-    if (backend === "demo" || !supabase || !session) return;
-    await loadSupabase(session, supabase);
-  }, [backend, loadSupabase, session, supabase]);
-
   const signIn = useCallback(
     async (email: string, password: string) => {
       setError(null);
@@ -437,6 +462,10 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           status: "active",
           voidReason: null,
           createdAt: new Date().toISOString(),
+          reviewStatus: "pending",
+          reviewNote: null,
+          reviewedByName: null,
+          reviewedAt: null,
         };
 
         const nextReports = [report, ...reports];
@@ -474,6 +503,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         finance_count: input.lines.filter((l) => l.category === "finance").length,
         has_debt: input.lines.some((l) => l.category === "debt"),
         status: "active",
+        review_status: "pending",
       });
 
       if (reportError) {
@@ -544,6 +574,54 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
       if (voidError) {
         setError(voidError.message);
+        return false;
+      }
+      await loadSupabase(session, supabase);
+      return true;
+    },
+    [backend, loadSupabase, persistDemo, reports, session, supabase],
+  );
+
+  /** Admin review: tick a report OK, or flag a concern against it. */
+  const setReportReview = useCallback(
+    async (reportId: string, status: ReviewStatus, note: string) => {
+      setError(null);
+      const trimmed = note.trim();
+
+      if (status === "concern" && trimmed.length < 3) {
+        setError("Add a short note explaining the concern.");
+        return false;
+      }
+
+      if (backend === "demo" || !supabase || !session) {
+        const nextReports = reports.map((report) =>
+          report.id === reportId
+            ? {
+                ...report,
+                reviewStatus: status,
+                reviewNote: status === "concern" ? trimmed : null,
+                reviewedByName: session?.displayName ?? "Admin",
+                reviewedAt: new Date().toISOString(),
+              }
+            : report,
+        );
+        setReports(nextReports);
+        persistDemo({ reports: nextReports });
+        return true;
+      }
+
+      const { error: reviewError } = await supabase
+        .from("daily_reports")
+        .update({
+          review_status: status,
+          review_note: status === "concern" ? trimmed : null,
+          reviewed_by: session.id,
+          reviewed_at: new Date().toISOString(),
+        })
+        .eq("id", reportId);
+
+      if (reviewError) {
+        setError(reviewError.message);
         return false;
       }
       await loadSupabase(session, supabase);
@@ -657,9 +735,9 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       signOut,
       saveReport,
       voidReport,
+      setReportReview,
       recordDebtPayment,
       addManualDebt,
-      refresh,
     }),
     [
       addManualDebt,
@@ -669,10 +747,10 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       error,
       ready,
       recordDebtPayment,
-      refresh,
       reports,
       saveReport,
       session,
+      setReportReview,
       signIn,
       signInDemo,
       signOut,

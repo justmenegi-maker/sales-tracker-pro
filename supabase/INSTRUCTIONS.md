@@ -32,6 +32,10 @@ Never commit real keys. `supabase/env.local` and `.env.local` are ignored.
 - Run the migrations in `supabase/migrations/` in filename order.
 - 004 adds read access to branch names for signed-in users, which the daily
   report form needs to label the branch.
+- 005 adds the admin review columns (`review_status`, `review_note`,
+  `reviewed_by`, `reviewed_at`) used by the tick-OK / flag-concern workflow.
+  Until it is applied the app still loads reports and treats them all as
+  unreviewed.
 - Run the seed in `supabase/seed.sql` if you want sample branches and admin.
 
 ## 5. Verify row-level security

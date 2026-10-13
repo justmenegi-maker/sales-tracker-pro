@@ -9,57 +9,82 @@ import { RequireAuth } from "@/components/require-auth";
 import { TrendChart } from "@/components/trend-chart";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatTile } from "@/components/ui/stat-tile";
-import { addDays, formatINRWhole, formatWeekdayShort, todayISO } from "@/lib/format";
-import { debtOutstandingPaise, deriveDebtStatus, reportTotalPaise } from "@/lib/report";
+import { formatINRWhole, todayISO } from "@/lib/format";
+import {
+  debtOutstandingPaise,
+  deriveDebtStatus,
+  reviewCounts,
+  summarizeReports,
+  totalsByDate,
+  trendSeries,
+} from "@/lib/report";
 import { useAppStore } from "@/lib/store";
 
 function DashboardBody() {
   const { session, reports, debts, branches } = useAppStore();
 
   const branchId = session?.branchId ?? null;
-  const scopedReports = useMemo(
-    () =>
-      reports.filter(
-        (report) => report.status === "active" && (!branchId || report.branchId === branchId),
-      ),
-    [branchId, reports],
-  );
-
-  const scopedDebts = useMemo(
-    () => debts.filter((debt) => !debt.voided && (!branchId || debt.branchId === branchId)),
-    [branchId, debts],
-  );
-
   const today = todayISO();
   const month = today.slice(0, 7);
 
-  const todayTotal = scopedReports
-    .filter((report) => report.reportDate === today)
-    .reduce((sum, report) => sum + reportTotalPaise(report), 0);
+  const summaries = useMemo(() => summarizeReports(reports), [reports]);
 
-  const monthReports = scopedReports.filter((report) =>
-    report.reportDate.startsWith(month),
+  const scoped = useMemo(
+    () =>
+      summaries.filter(
+        (summary) =>
+          summary.report.status === "active" &&
+          (!branchId || summary.report.branchId === branchId),
+      ),
+    [branchId, summaries],
   );
-  const monthTotal = monthReports.reduce(
-    (sum, report) => sum + reportTotalPaise(report),
+
+  const totals = useMemo(() => totalsByDate(scoped), [scoped]);
+  const trend = useMemo(
+    () => trendSeries(totals, 14, today),
+    [today, totals],
+  );
+
+  const todayTotal = totals.get(today) ?? 0;
+  const monthSummaries = useMemo(
+    () =>
+      scoped.filter((summary) => summary.report.reportDate.startsWith(month)),
+    [month, scoped],
+  );
+  const monthTotal = monthSummaries.reduce(
+    (sum, summary) => sum + summary.totalPaise,
     0,
   );
+  const monthFinance = monthSummaries.reduce(
+    (sum, summary) => sum + summary.financeCount,
+    0,
+  );
+  const review = useMemo(
+    () => reviewCounts(scoped.map((summary) => summary.report)),
+    [scoped],
+  );
 
-  const trend = Array.from({ length: 14 }, (_, index) => {
-    const date = addDays(today, -(13 - index));
-    const value = scopedReports
-      .filter((report) => report.reportDate === date)
-      .reduce((sum, report) => sum + reportTotalPaise(report), 0);
-    return { label: formatWeekdayShort(date), value };
-  });
-
-  const outstanding = scopedDebts
+  const outstanding = debts
+    .filter(
+      (debt) => !debt.voided && (!branchId || debt.branchId === branchId),
+    )
     .filter((debt) => deriveDebtStatus(debt) !== "cleared")
     .reduce((sum, debt) => sum + debtOutstandingPaise(debt), 0);
+
+  const openDebtCount = debts.filter(
+    (debt) =>
+      !debt.voided &&
+      (!branchId || debt.branchId === branchId) &&
+      deriveDebtStatus(debt) !== "cleared",
+  ).length;
 
   const branchName =
     branches.find((branch) => branch.id === branchId)?.name ??
     (session?.role === "admin" ? "All branches" : "Your branch");
+
+  const historySummaries = [...scoped].sort((a, b) =>
+    a.report.reportDate < b.report.reportDate ? 1 : -1,
+  );
 
   return (
     <AppShell
@@ -71,36 +96,25 @@ function DashboardBody() {
           <StatTile
             label="Today's Total Sale"
             value={formatINRWhole(todayTotal)}
-            hint={scopedReports.some((report) => report.reportDate === today)
-              ? "Report filed"
-              : "Not filed yet"}
+            hint={todayTotal > 0 ? "Report filed" : "Not filed yet"}
             tone="primary"
           />
           <StatTile
             label="This month"
             value={formatINRWhole(monthTotal)}
-            hint={`${monthReports.length} reports filed`}
+            hint={`${monthSummaries.length} reports · ${monthFinance} finance`}
           />
           <StatTile
             label="Debt outstanding"
             value={formatINRWhole(outstanding)}
-            hint={`${scopedDebts.length} ledger entries`}
+            hint={`${openDebtCount} open ledger entries`}
             tone={outstanding > 0 ? "warning" : "default"}
           />
           <StatTile
-            label="Finance count"
-            value={String(
-              scopedReports
-                .filter((report) => report.reportDate.startsWith(month))
-                .reduce(
-                  (sum, report) =>
-                    sum +
-                    report.lines.filter((line) => line.category === "finance")
-                      .length,
-                  0,
-                ),
-            )}
-            hint="Financed sales this month"
+            label="Flagged by admin"
+            value={String(review.concern)}
+            hint={`${review.pending} awaiting review`}
+            tone={review.concern > 0 ? "warning" : "default"}
           />
         </div>
 
@@ -117,10 +131,9 @@ function DashboardBody() {
 
         <div className="grid gap-6 lg:grid-cols-2">
           <ReportsTable
-            reports={[...scopedReports].sort((a, b) =>
-              a.reportDate < b.reportDate ? 1 : -1,
-            )}
+            summaries={historySummaries}
             title="Your filed reports"
+            limit={10}
             emptyHint="Nothing filed yet. Add today's numbers above to get started."
           />
           <DebtLedger branchId={branchId} />

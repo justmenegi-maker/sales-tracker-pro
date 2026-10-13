@@ -9,7 +9,13 @@
  */
 import { addDays, todayISO } from "./format";
 import { makeId } from "./report";
-import type { Branch, DailyReport, Debt, ReportLine } from "./report";
+import type {
+  Branch,
+  DailyReport,
+  Debt,
+  ReportLine,
+  ReviewStatus,
+} from "./report";
 
 export const DEMO_BRANCHES: Branch[] = [
   { id: "branch_kaza", name: "SK Kaza", isActive: true },
@@ -69,6 +75,7 @@ function buildDay(
   random: () => number,
   branch: Branch,
   reportDate: string,
+  daysAgo: number,
 ): DailyReport {
   const weekend = ["Sat", "Sun"].includes(
     new Intl.DateTimeFormat("en-IN", { weekday: "short", timeZone: "UTC" }).format(
@@ -107,6 +114,27 @@ function buildDay(
     line("others", pick(random, OTHER_NOTES), 300, 4000);
   }
 
+  // Older days have mostly been reviewed; the last two days stay pending so the
+  // admin always has a working queue to look at.
+  let reviewStatus: ReviewStatus = "pending";
+  let reviewNote: string | null = null;
+  let reviewedByName: string | null = null;
+  let reviewedAt: string | null = null;
+
+  if (daysAgo > 1) {
+    const roll = random();
+    if (roll > 0.4) {
+      reviewStatus = "ok";
+    } else if (roll > 0.26) {
+      reviewStatus = "concern";
+      reviewNote = "Cash is well below the usual counter total for this day.";
+    }
+    if (reviewStatus !== "pending") {
+      reviewedByName = DEMO_USERS.admin.displayName;
+      reviewedAt = `${reportDate}T19:05:00.000Z`;
+    }
+  }
+
   return {
     id: makeId("report"),
     branchId: branch.id,
@@ -120,6 +148,10 @@ function buildDay(
     status: "active",
     voidReason: null,
     createdAt: `${reportDate}T14:20:00.000Z`,
+    reviewStatus,
+    reviewNote,
+    reviewedByName,
+    reviewedAt,
   };
 }
 
@@ -131,7 +163,7 @@ export function buildDemoReports(days = 21): DailyReport[] {
       const reportDate = addDays(todayISO(), -offset);
       // Occasionally a branch has not filed a report for a day.
       if (random() < 0.08) continue;
-      reports.push(buildDay(random, branch, reportDate));
+      reports.push(buildDay(random, branch, reportDate, offset));
     }
   }
   return reports;
