@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { DebtLedger } from "@/components/debt-ledger";
 import { ReportForm } from "@/components/report-form";
 import { ReportsTable } from "@/components/reports-table";
 import { RequireAuth } from "@/components/require-auth";
 import { TrendChart } from "@/components/trend-chart";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatTile } from "@/components/ui/stat-tile";
 import { formatINRWhole, todayISO } from "@/lib/format";
@@ -23,7 +24,17 @@ import { useAppStore } from "@/lib/store";
 function DashboardBody() {
   const { session, reports, debts, branches } = useAppStore();
 
-  const branchId = session?.branchId ?? null;
+  const [activeBranchFilter, setActiveBranchFilter] = useState<string>(
+    session?.branchId || "all",
+  );
+
+  const effectiveBranchId =
+    session?.role === "branch" && session.branchId
+      ? session.branchId
+      : activeBranchFilter === "all"
+        ? null
+        : activeBranchFilter;
+
   const today = todayISO();
   const month = today.slice(0, 7);
 
@@ -34,9 +45,9 @@ function DashboardBody() {
       summaries.filter(
         (summary) =>
           summary.report.status === "active" &&
-          (!branchId || summary.report.branchId === branchId),
+          (!effectiveBranchId || summary.report.branchId === effectiveBranchId),
       ),
-    [branchId, summaries],
+    [effectiveBranchId, summaries],
   );
 
   const totals = useMemo(() => totalsByDate(scoped), [scoped]);
@@ -66,7 +77,7 @@ function DashboardBody() {
 
   const outstanding = debts
     .filter(
-      (debt) => !debt.voided && (!branchId || debt.branchId === branchId),
+      (debt) => !debt.voided && (!effectiveBranchId || debt.branchId === effectiveBranchId),
     )
     .filter((debt) => deriveDebtStatus(debt) !== "cleared")
     .reduce((sum, debt) => sum + debtOutstandingPaise(debt), 0);
@@ -74,24 +85,47 @@ function DashboardBody() {
   const openDebtCount = debts.filter(
     (debt) =>
       !debt.voided &&
-      (!branchId || debt.branchId === branchId) &&
+      (!effectiveBranchId || debt.branchId === effectiveBranchId) &&
       deriveDebtStatus(debt) !== "cleared",
   ).length;
 
-  const branchName =
-    branches.find((branch) => branch.id === branchId)?.name ??
-    (session?.role === "admin" ? "All branches" : "Your branch");
+  const currentBranch = branches.find((b) => b.id === effectiveBranchId);
+  const branchSubtitle = currentBranch
+    ? `${currentBranch.name} · ${session?.displayName ?? ""}`
+    : `All branches · ${session?.displayName ?? ""}`;
 
   const historySummaries = [...scoped].sort((a, b) =>
     a.report.reportDate < b.report.reportDate ? 1 : -1,
   );
 
   return (
-    <AppShell
-      title="Daily sales report"
-      subtitle={`${branchName} · ${session?.displayName ?? ""}`}
-    >
+    <AppShell title="Daily sales report" subtitle={branchSubtitle}>
       <div className="space-y-6">
+        {session?.role === "admin" ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
+              Filter Branch:
+            </span>
+            <Button
+              size="sm"
+              variant={activeBranchFilter === "all" ? "default" : "outline"}
+              onClick={() => setActiveBranchFilter("all")}
+            >
+              All Branches
+            </Button>
+            {branches.map((b) => (
+              <Button
+                key={b.id}
+                size="sm"
+                variant={activeBranchFilter === b.id ? "default" : "outline"}
+                onClick={() => setActiveBranchFilter(b.id)}
+              >
+                {b.name}
+              </Button>
+            ))}
+          </div>
+        ) : null}
+
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <StatTile
             label="Today's Total Sale"
@@ -132,11 +166,11 @@ function DashboardBody() {
         <div className="grid gap-6 lg:grid-cols-2">
           <ReportsTable
             summaries={historySummaries}
-            title="Your filed reports"
+            title={effectiveBranchId ? "Your filed reports" : "Consolidated branch reports"}
             limit={10}
             emptyHint="Nothing filed yet. Add today's numbers above to get started."
           />
-          <DebtLedger branchId={branchId} />
+          <DebtLedger branchId={effectiveBranchId} />
         </div>
       </div>
     </AppShell>

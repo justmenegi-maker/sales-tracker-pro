@@ -13,6 +13,11 @@ export const metadata: Metadata = {
   },
   description:
     "Daily sales reporting for SK Tapri branches. Cash, online, finance, debt, exchange, cheque, store use, and other totals — all in one place.",
+  openGraph: {
+    title: "SK Tapri — Daily Sales Report",
+    description:
+      "Daily sales reporting for SK Tapri branches. Cash, online, finance, debt, exchange, cheque, store use, and other totals — all in one place.",
+  },
 };
 
 export const viewport: Viewport = {

@@ -38,15 +38,14 @@ function initialLines(): LineDraft[] {
 export function ReportForm() {
   const { session, branches, reports, saveReport } = useAppStore();
   const [reportDate, setReportDate] = useState(todayISO());
-  const [branchId, setBranchId] = useState(
-    session?.branchId ?? branches[0]?.id ?? "",
-  );
+  const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
+  const branchId = selectedBranchId ?? (session?.branchId || branches[0]?.id || "");
   const [cashPaise, setCashPaise] = useState(0);
   const [onlinePaise, setOnlinePaise] = useState(0);
   const [lines, setLines] = useState<LineDraft[]>(initialLines);
   const [saving, setSaving] = useState(false);
 
-  const isBranchUser = session?.role === "branch";
+  const isBranchUser = session?.role === "branch" && Boolean(session?.branchId);
 
   const sections = useMemo(() => {
     const base = {
@@ -166,7 +165,7 @@ export function ReportForm() {
                 <select
                   id="report-branch"
                   value={branchId}
-                  onChange={(event) => setBranchId(event.target.value)}
+                  onChange={(event) => setSelectedBranchId(event.target.value)}
                   className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                 >
                   {branches.map((branch) => (

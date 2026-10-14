@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --hostname 0.0.0.0 --port ${PORT:-5173}",
+    "dev": "next dev -p 3000 -H 0.0.0.0",
     "build": "next build",
     "lint": "eslint src --max-warnings 0",
     "format": "prettier --write .",
@@ -11,9 +11,9 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.49.1",
     "@tailwindcss/postcss": "^4.3.3",
     "clsx": "^2.1.1",
+    "firebase": "^13.0.0",
     "lucide-react": "^0.514.0",
     "next": "latest",
     "react": "^19.0.0",
@@ -22,6 +22,7 @@
     "tailwind-merge": "^3.0.1"
   },
   "devDependencies": {
+    "@firebase/eslint-plugin-security-rules": "^0.0.2",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

@@ -24,7 +24,7 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { session, backend, signOut } = useAppStore();
+  const { session, branches, signOut } = useAppStore();
 
   return (
     <div className="min-h-screen">
@@ -66,8 +66,10 @@ export function AppShell({
           </nav>
 
           <div className="ml-auto flex items-center gap-2">
-            <Badge variant={backend === "supabase" ? "default" : "outline"}>
-              {backend === "supabase" ? "Supabase" : "Demo data"}
+            <Badge variant="outline" className="text-xs capitalize">
+              {session?.role === "admin"
+                ? "Admin"
+                : (branches.find((b) => b.id === session?.branchId)?.name || session?.branchName || "Branch")}
             </Badge>
             <span className="hidden text-xs text-muted-foreground md:inline">
               {session?.email}

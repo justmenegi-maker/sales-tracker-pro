@@ -8,7 +8,6 @@ import {
   Store,
   TrendingUp,
 } from "lucide-react";
-import { DemoButton } from "@/components/demo-button";
 import { TrendChart } from "@/components/trend-chart";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -158,13 +157,15 @@ export default function HomePage() {
                   Sign in to file today
                 </Button>
               </Link>
-              <DemoButton
-                size="lg"
-                variant="outline"
-                className="w-full sm:w-auto"
-              >
-                Explore the demo workspace
-              </DemoButton>
+              <Link href="/admin">
+                <Button
+                  size="lg"
+                  variant="outline"
+                  className="w-full sm:w-auto"
+                >
+                  Admin overview
+                </Button>
+              </Link>
             </div>
 
             <dl className="mt-10 grid max-w-lg grid-cols-3 gap-4 border-t pt-6">
@@ -292,14 +293,14 @@ export default function HomePage() {
                 <Link href="/auth/login">
                   <Button className="w-full sm:w-auto">Open the workspace</Button>
                 </Link>
-                <DemoButton
-                  role="admin"
-                  href="/admin"
-                  variant="outline"
-                  className="w-full sm:w-auto"
-                >
-                  See the admin view
-                </DemoButton>
+                <Link href="/admin">
+                  <Button
+                    variant="outline"
+                    className="w-full sm:w-auto"
+                  >
+                    Admin overview
+                  </Button>
+                </Link>
               </div>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">

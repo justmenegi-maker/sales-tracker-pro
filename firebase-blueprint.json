@@ -1,0 +1,303 @@
+{
+  "entities": {
+    "Admin": {
+      "title": "Admin",
+      "description": "System administrator with global oversight",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "description": "Administrator email address",
+          "maxLength": 256
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp when the admin record was created"
+        }
+      },
+      "required": ["email", "createdAt"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile with role and optional branch assignment",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "description": "User email address",
+          "maxLength": 256
+        },
+        "displayName": {
+          "type": "string",
+          "description": "User display name",
+          "maxLength": 100
+        },
+        "role": {
+          "type": "string",
+          "description": "User role: admin or branch",
+          "enum": ["admin", "branch"]
+        },
+        "branchId": {
+          "type": "string",
+          "description": "Assigned branch ID if role is branch",
+          "maxLength": 64
+        },
+        "assignedBranches": {
+          "type": "array",
+          "description": "List of branch IDs the user can access"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp when profile was created"
+        }
+      },
+      "required": ["email", "displayName", "role", "createdAt"]
+    },
+    "StaffInvite": {
+      "title": "StaffInvite",
+      "description": "Invitation record linking staff email to branch assignments",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "description": "Staff Gmail address",
+          "maxLength": 256
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Staff display name",
+          "maxLength": 100
+        },
+        "branchId": {
+          "type": "string",
+          "description": "Primary branch assigned",
+          "maxLength": 64
+        },
+        "branchName": {
+          "type": "string",
+          "description": "Name of the assigned branch",
+          "maxLength": 128
+        },
+        "role": {
+          "type": "string",
+          "description": "Role assigned to staff",
+          "enum": ["branch", "admin"]
+        },
+        "invitedBy": {
+          "type": "string",
+          "description": "Email or UID of admin who sent invite",
+          "maxLength": 256
+        },
+        "status": {
+          "type": "string",
+          "description": "Invite status",
+          "enum": ["invited", "active"]
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp of invitation"
+        }
+      },
+      "required": ["email", "displayName", "branchId", "branchName", "role", "status", "createdAt"]
+    },
+    "Branch": {
+      "title": "Branch",
+      "description": "Store branch location",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Branch name",
+          "maxLength": 128
+        },
+        "isActive": {
+          "type": "boolean",
+          "description": "Whether branch is currently active"
+        },
+        "managerEmail": {
+          "type": "string",
+          "description": "Assigned manager Gmail address",
+          "maxLength": 256
+        },
+        "managerName": {
+          "type": "string",
+          "description": "Assigned manager display name",
+          "maxLength": 100
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp of creation"
+        }
+      },
+      "required": ["name", "isActive"]
+    },
+    "DailyReport": {
+      "title": "DailyReport",
+      "description": "Filed daily sales report for a branch",
+      "type": "object",
+      "properties": {
+        "branchId": {
+          "type": "string",
+          "description": "Branch identifier",
+          "maxLength": 64
+        },
+        "branchName": {
+          "type": "string",
+          "description": "Branch name snapshot",
+          "maxLength": 128
+        },
+        "reportDate": {
+          "type": "string",
+          "description": "Report date in YYYY-MM-DD format",
+          "maxLength": 10
+        },
+        "submittedBy": {
+          "type": "string",
+          "description": "UID of the user who submitted the report",
+          "maxLength": 128
+        },
+        "submittedByName": {
+          "type": "string",
+          "description": "Name of user who submitted the report",
+          "maxLength": 100
+        },
+        "cashPaise": {
+          "type": "number",
+          "description": "Cash collected in paise"
+        },
+        "onlinePaise": {
+          "type": "number",
+          "description": "Online payment in paise"
+        },
+        "lines": {
+          "type": "array",
+          "description": "Detailed breakdown lines for finance, debt, exchange, etc."
+        },
+        "status": {
+          "type": "string",
+          "description": "Report status",
+          "enum": ["active", "voided"]
+        },
+        "voidReason": {
+          "type": "string",
+          "description": "Reason for voiding the report if voided",
+          "maxLength": 500
+        },
+        "reviewStatus": {
+          "type": "string",
+          "description": "Review status by admin",
+          "enum": ["pending", "ok", "concern"]
+        },
+        "reviewNote": {
+          "type": "string",
+          "description": "Admin review note",
+          "maxLength": 500
+        },
+        "reviewedByName": {
+          "type": "string",
+          "description": "Admin reviewer name",
+          "maxLength": 100
+        },
+        "reviewedAt": {
+          "type": "string",
+          "description": "ISO timestamp when reviewed"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Timestamp when report was created"
+        }
+      },
+      "required": [
+        "branchId",
+        "branchName",
+        "reportDate",
+        "submittedBy",
+        "cashPaise",
+        "onlinePaise",
+        "lines",
+        "status",
+        "reviewStatus",
+        "createdAt"
+      ]
+    },
+    "Debt": {
+      "title": "Debt",
+      "description": "Customer credit debt ledger entry",
+      "type": "object",
+      "properties": {
+        "branchId": {
+          "type": "string",
+          "description": "Branch identifier",
+          "maxLength": 64
+        },
+        "productName": {
+          "type": "string",
+          "description": "Product or reason for debt",
+          "maxLength": 200
+        },
+        "amountPaise": {
+          "type": "number",
+          "description": "Debt amount in paise"
+        },
+        "debtDate": {
+          "type": "string",
+          "description": "Debt date in YYYY-MM-DD format",
+          "maxLength": 10
+        },
+        "source": {
+          "type": "string",
+          "description": "Origin of debt record",
+          "enum": ["report", "manual"]
+        },
+        "voided": {
+          "type": "boolean",
+          "description": "Whether debt is voided"
+        },
+        "payments": {
+          "type": "array",
+          "description": "Payments made towards this debt"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Timestamp when debt was created"
+        }
+      },
+      "required": [
+        "branchId",
+        "productName",
+        "amountPaise",
+        "debtDate",
+        "source",
+        "voided",
+        "payments",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/admins/{adminId}": {
+      "schema": "Admin",
+      "description": "Lookup collection for administrators"
+    },
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profiles with roles and branch assignments"
+    },
+    "/invites/{inviteId}": {
+      "schema": "StaffInvite",
+      "description": "Staff invitations and branch assignments"
+    },
+    "/branches/{branchId}": {
+      "schema": "Branch",
+      "description": "Branch locations"
+    },
+    "/reports/{reportId}": {
+      "schema": "DailyReport",
+      "description": "Daily sales reports"
+    },
+    "/debts/{debtId}": {
+      "schema": "Debt",
+      "description": "Debt ledger records"
+    }
+  }
+}

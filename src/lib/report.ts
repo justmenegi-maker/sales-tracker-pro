@@ -34,6 +34,21 @@ export type Branch = {
   id: string;
   name: string;
   isActive: boolean;
+  managerEmail?: string | null;
+  managerName?: string | null;
+  createdAt?: string;
+};
+
+export type StaffInvite = {
+  id: string;
+  email: string;
+  displayName: string;
+  branchId: string;
+  branchName: string;
+  role: "branch" | "admin";
+  invitedBy?: string;
+  status: "invited" | "active";
+  createdAt: string;
 };
 
 /** Admin review of a filed report. */

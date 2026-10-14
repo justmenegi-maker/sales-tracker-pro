@@ -1,14 +1,9 @@
 "use client";
 
 /**
- * Single source of truth for the signed-in workspace.
+ * Single source of truth for SK Tapri Daily Sales workspace.
  *
- * Two backends are supported behind one API:
- *  - `supabase`: real auth + tables (used when the env keys are present)
- *  - `demo`: seeded data persisted to localStorage (used when they are not)
- *
- * Components only ever talk to this provider, so switching backends never
- * changes page code.
+ * Exclusively powered by Firebase Authentication and Cloud Firestore.
  */
 import {
   createContext,
@@ -20,8 +15,30 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { createDemoWorkspace, DEMO_BRANCHES, DEMO_USERS } from "./demo-data";
-import { getSupabase, isSupabaseConfigured } from "./supabase";
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  onSnapshot,
+  setDoc,
+  updateDoc,
+} from "firebase/firestore";
+import {
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+} from "firebase/auth";
+import {
+  auth,
+  db,
+  googleProvider,
+  handleFirestoreError,
+  OperationType,
+  signInWithPopup,
+  fbSignOut,
+  onAuthStateChanged,
+  type User,
+} from "./firebase";
 import { makeId } from "./report";
 import type {
   Branch,
@@ -30,38 +47,31 @@ import type {
   LineCategory,
   ReviewStatus,
   SaveReportInput,
+  StaffInvite,
 } from "./report";
 import { computeTotalSale } from "./totals";
 
-type Backend = "supabase" | "demo";
-
-type Session = {
+export type Session = {
   id: string;
   email: string;
   displayName: string;
   role: "admin" | "branch";
   branchId: string | null;
-};
-
-type ProfileRow = {
-  id: string;
-  role: "admin" | "branch";
-  branch_id: string | null;
-  display_name: string;
-  is_active: boolean;
+  branchName?: string | null;
 };
 
 type StoreValue = {
   ready: boolean;
-  backend: Backend;
+  backend: "firebase";
   session: Session | null;
   branches: Branch[];
   reports: DailyReport[];
   debts: Debt[];
+  invites: StaffInvite[];
   error: string | null;
   clearError: () => void;
   signIn: (email: string, password: string) => Promise<boolean>;
-  signInDemo: (role: "admin" | "branch") => void;
+  signInWithGoogle: () => Promise<boolean>;
   signOut: () => Promise<void>;
   saveReport: (input: SaveReportInput) => Promise<boolean>;
   voidReport: (reportId: string, reason: string) => Promise<boolean>;
@@ -81,86 +91,59 @@ type StoreValue = {
     amountPaise: number;
     debtDate: string;
   }) => Promise<boolean>;
+  addBranch: (
+    name: string,
+    managerEmail?: string,
+    managerName?: string,
+  ) => Promise<boolean>;
+  deleteBranch: (branchId: string) => Promise<boolean>;
+  inviteStaff: (input: {
+    email: string;
+    displayName: string;
+    branchId: string;
+    role?: "branch" | "admin";
+  }) => Promise<boolean>;
+  deleteInvite: (inviteId: string) => Promise<boolean>;
 };
 
-const DEMO_SESSION_KEY = "sktapri.session.v1";
-const DEMO_WORKSPACE_KEY = "sktapri.workspace.v1";
+const BOOTSTRAP_ADMIN_EMAIL = "justmenegi@gmail.com";
+
+const INITIAL_BRANCHES: Branch[] = [
+  {
+    id: "kaza",
+    name: "SK Kaza Main Market",
+    isActive: true,
+    managerEmail: "justmenegi@gmail.com",
+    managerName: "Admin",
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: "tabo",
+    name: "SK Tabo Gompa",
+    isActive: true,
+    managerEmail: null,
+    managerName: null,
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: "cp",
+    name: "SK Tapri Connaught Place",
+    isActive: true,
+    managerEmail: null,
+    managerName: null,
+    createdAt: new Date().toISOString(),
+  },
+];
 
 const StoreContext = createContext<StoreValue | null>(null);
 
-function readJSON<T>(key: string): T | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as T) : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeJSON(key: string, value: unknown): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // Storage can be unavailable (private mode); the app still works in memory.
-  }
-}
-
-const REPORT_COLUMNS =
-  "id, branch_id, report_date, submitted_by, cash_paise, online_paise, status, void_reason, created_at, review_status, review_note, reviewed_by, reviewed_at, report_lines(id, category, label, amount_paise)";
-
-const REPORT_COLUMNS_LEGACY =
-  "id, branch_id, report_date, submitted_by, cash_paise, online_paise, status, void_reason, created_at, report_lines(id, category, label, amount_paise)";
-
-type SupabaseReportRow = {
-  id: string;
-  branch_id: string;
-  report_date: string;
-  submitted_by: string;
-  cash_paise: number;
-  online_paise: number;
-  status: "active" | "voided";
-  void_reason: string | null;
-  created_at: string;
-  /** Absent on a project that has not run migration 005. */
-  review_status?: ReviewStatus | null;
-  review_note?: string | null;
-  reviewed_by?: string | null;
-  reviewed_at?: string | null;
-  report_lines: Array<{
-    id: string;
-    category: LineCategory;
-    label: string;
-    amount_paise: number;
-  }> | null;
-};
-
-type SupabaseDebtRow = {
-  id: string;
-  branch_id: string;
-  product_name: string;
-  amount_paise: number;
-  debt_date: string;
-  source: "report" | "manual";
-  voided: boolean;
-  debt_payments: Array<{
-    id: string;
-    amount_paise: number;
-    paid_on: string;
-    note: string | null;
-  }> | null;
-};
-
 export function AppStoreProvider({ children }: { children: ReactNode }) {
-  const backend: Backend = isSupabaseConfigured() ? "supabase" : "demo";
-  const supabase = useMemo(() => getSupabase(), []);
-
   const [ready, setReady] = useState(false);
   const [session, setSession] = useState<Session | null>(null);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [reports, setReports] = useState<DailyReport[]>([]);
   const [debts, setDebts] = useState<Debt[]>([]);
+  const [invites, setInvites] = useState<StaffInvite[]>([]);
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(true);
 
@@ -171,258 +154,341 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const persistDemo = useCallback(
-    (next: { reports?: DailyReport[]; debts?: Debt[] }) => {
-      const current = readJSON<{ reports: DailyReport[]; debts: Debt[] }>(
-        DEMO_WORKSPACE_KEY,
-      ) ?? { reports: [], debts: [] };
-      writeJSON(DEMO_WORKSPACE_KEY, {
-        reports: next.reports ?? current.reports,
-        debts: next.debts ?? current.debts,
-      });
-    },
-    [],
-  );
+  // Sync user profile & staff invite state
+  const resolveFirebaseUser = useCallback(async (user: User): Promise<Session> => {
+    const emailLower = (user.email || "").toLowerCase();
+    const isAdminUser = emailLower === BOOTSTRAP_ADMIN_EMAIL.toLowerCase();
 
-  const loadSupabase = useCallback(
-    async (activeSession: Session, client: NonNullable<typeof supabase>) => {
-      const [branchResult, profileResult, debtResult] = await Promise.all([
-        client.from("branches").select("id, name, is_active").order("name"),
-        client.from("profiles").select("id, display_name"),
-        client
-          .from("debts")
-          .select(
-            "id, branch_id, product_name, amount_paise, debt_date, source, voided, debt_payments(id, amount_paise, paid_on, note)",
-          )
-          .order("debt_date", { ascending: false })
-          .limit(500),
-      ]);
+    // Check admin document
+    let adminDocExists = false;
+    try {
+      const adminSnap = await getDoc(doc(db, "admins", user.uid));
+      adminDocExists = adminSnap.exists();
+    } catch {
+      adminDocExists = false;
+    }
 
-      const reportQuery = (columns: string) =>
-        client
-          .from("daily_reports")
-          .select(columns)
-          .order("report_date", { ascending: false })
-          .limit(500);
+    const isAdmin = isAdminUser || adminDocExists;
 
-      let reportResult = await reportQuery(REPORT_COLUMNS);
+    // Check user profile document
+    let profileRole: "admin" | "branch" = isAdmin ? "admin" : "branch";
+    let branchId: string | null = null;
+    let branchName: string | null = null;
 
-      // A project that has not run migration 005 yet has no review columns.
-      // Fall back to the original select so the workspace still opens, with
-      // every report treated as unreviewed.
-      if (reportResult.error?.code === "42703") {
-        reportResult = await reportQuery(REPORT_COLUMNS_LEGACY);
+    try {
+      const userDocRef = doc(db, "users", user.uid);
+      const userSnap = await getDoc(userDocRef);
+
+      if (userSnap.exists()) {
+        const udata = userSnap.data();
+        profileRole = isAdmin ? "admin" : (udata.role as "admin" | "branch") || "branch";
+        branchId = udata.branchId || null;
+      } else {
+        const newProfile = {
+          email: user.email || "",
+          displayName: user.displayName || user.email?.split("@")[0] || "User",
+          role: profileRole,
+          branchId: null,
+          createdAt: new Date().toISOString(),
+        };
+        await setDoc(userDocRef, newProfile);
       }
+    } catch (err) {
+      console.warn("Could not read/write user profile:", err);
+    }
 
-      const failure =
-        branchResult.error ?? reportResult.error ?? debtResult.error ?? null;
-      if (failure) {
-        if (mounted.current) setError(failure.message);
-        return;
+    // Check if staff has an invite record by email
+    if (!isAdmin && emailLower) {
+      try {
+        const inviteDocSnap = await getDoc(doc(db, "invites", emailLower.replace(/[^a-zA-Z0-9_-]/g, "_")));
+        if (inviteDocSnap.exists()) {
+          const inv = inviteDocSnap.data() as StaffInvite;
+          branchId = inv.branchId;
+          branchName = inv.branchName;
+          profileRole = inv.role || "branch";
+          // Update user doc with assigned branch
+          await updateDoc(doc(db, "users", user.uid), {
+            branchId: inv.branchId,
+            role: profileRole,
+          });
+          // Mark invite as active
+          await updateDoc(doc(db, "invites", inviteDocSnap.id), {
+            status: "active",
+          });
+        }
+      } catch (err) {
+        console.warn("Could not check staff invite:", err);
       }
+    }
 
-      const names = new Map<string, string>(
-        ((profileResult.data ?? []) as ProfileRow[]).map((profile) => [
-          profile.id,
-          profile.display_name || profile.id,
-        ]),
-      );
+    // Ensure bootstrap admin document exists
+    if (isAdmin && !adminDocExists) {
+      try {
+        await setDoc(doc(db, "admins", user.uid), {
+          email: user.email || "",
+          createdAt: new Date().toISOString(),
+        });
+      } catch (err) {
+        console.warn("Could not write admin record:", err);
+      }
+    }
 
-      const branchRows = (branchResult.data ?? []) as unknown as Array<{
-        id: string;
-        name: string;
-        is_active: boolean;
-      }>;
-      const branchList: Branch[] = branchRows.map((row) => ({
-        id: row.id,
-        name: row.name,
-        isActive: row.is_active,
-      }));
-      const branchNames = new Map(branchList.map((b) => [b.id, b.name]));
+    return {
+      id: user.uid,
+      email: user.email || "",
+      displayName: user.displayName || user.email?.split("@")[0] || "Staff",
+      role: profileRole,
+      branchId,
+      branchName,
+    };
+  }, []);
 
-      const reportRows = (reportResult.data ?? []) as unknown as SupabaseReportRow[];
-      const debtRows = (debtResult.data ?? []) as unknown as SupabaseDebtRow[];
-
+  // Auth state listener
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (!mounted.current) return;
 
-      setBranches(branchList);
-      setReports(
-        reportRows.map((row) => ({
-          id: row.id,
-          branchId: row.branch_id,
-          branchName: branchNames.get(row.branch_id) ?? "Branch",
-          reportDate: row.report_date,
-          submittedBy: row.submitted_by,
-          submittedByName: names.get(row.submitted_by) ?? activeSession.displayName,
-          cashPaise: row.cash_paise,
-          onlinePaise: row.online_paise,
-          lines: (row.report_lines ?? []).map((line) => ({
-            id: line.id,
-            category: line.category,
-            label: line.label,
-            amountPaise: line.amount_paise,
-          })),
-          status: row.status,
-          voidReason: row.void_reason,
-          createdAt: row.created_at,
-          reviewStatus: row.review_status ?? "pending",
-          reviewNote: row.review_note ?? null,
-          reviewedByName: row.reviewed_by
-            ? (names.get(row.reviewed_by) ?? "Admin")
-            : null,
-          reviewedAt: row.reviewed_at ?? null,
-        })),
-      );
-      setDebts(
-        debtRows.map((row) => ({
-          id: row.id,
-          branchId: row.branch_id,
-          productName: row.product_name,
-          amountPaise: row.amount_paise,
-          debtDate: row.debt_date,
-          source: row.source,
-          voided: row.voided,
-          payments: (row.debt_payments ?? []).map((payment) => ({
-            id: payment.id,
-            amountPaise: payment.amount_paise,
-            paidOn: payment.paid_on,
-            note: payment.note,
-          })),
-        })),
-      );
-    },
-    [],
-  );
-
-  const resolveSupabaseSession = useCallback(
-    async (client: NonNullable<typeof supabase>) => {
-      const { data } = await client.auth.getSession();
-      const user = data.session?.user;
       if (!user) {
         setSession(null);
         setReady(true);
         return;
       }
 
-      const { data: profile } = await client
-        .from("profiles")
-        .select("id, role, branch_id, display_name, is_active")
-        .eq("id", user.id)
-        .maybeSingle();
-
-      const next: Session = {
-        id: user.id,
-        email: user.email ?? "",
-        displayName: profile?.display_name || user.email || "Signed in",
-        role: profile?.role === "admin" ? "admin" : "branch",
-        branchId: profile?.branch_id ?? null,
-      };
-
-      if (!mounted.current) return;
-      setSession(next);
-      await loadSupabase(next, client);
-      if (mounted.current) setReady(true);
-    },
-    [loadSupabase],
-  );
-
-  // Boot: restore a demo session, or resolve the Supabase session.
-  useEffect(() => {
-    let cancelled = false;
-
-    async function boot() {
-      if (backend === "demo") {
-        const stored = readJSON<Session>(DEMO_SESSION_KEY);
-        const workspace = readJSON<{ reports: DailyReport[]; debts: Debt[] }>(
-          DEMO_WORKSPACE_KEY,
-        );
-        const seeded = createDemoWorkspace();
-        if (cancelled) return;
-        setBranches(seeded.branches);
-        setReports(workspace?.reports?.length ? workspace.reports : seeded.reports);
-        setDebts(workspace?.debts?.length ? workspace.debts : seeded.debts);
-        setSession(stored ?? null);
-        setReady(true);
-        return;
-      }
-
-      if (supabase) await resolveSupabaseSession(supabase);
-      else setReady(true);
-    }
-
-    void boot();
-    return () => {
-      cancelled = true;
-    };
-  }, [backend, resolveSupabaseSession, supabase]);
-
-  // Keep the Supabase session in sync with auth events.
-  useEffect(() => {
-    if (!supabase) return;
-    const { data } = supabase.auth.onAuthStateChange((event) => {
-      if (event === "SIGNED_OUT") {
-        setSession(null);
-        setReports([]);
-        setDebts([]);
-        return;
-      }
-      if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
-        void resolveSupabaseSession(supabase);
+      try {
+        const resolved = await resolveFirebaseUser(user);
+        if (mounted.current) {
+          setSession(resolved);
+          setReady(true);
+        }
+      } catch (err) {
+        console.error("Auth state resolution error:", err);
+        if (mounted.current) setReady(true);
       }
     });
-    return () => data.subscription.unsubscribe();
-  }, [resolveSupabaseSession, supabase]);
+
+    return () => unsubscribe();
+  }, [resolveFirebaseUser]);
+
+  // Firestore Realtime Listeners
+  useEffect(() => {
+    if (!session) return;
+
+    // Branches listener
+    const unsubBranches = onSnapshot(
+      collection(db, "branches"),
+      async (snapshot) => {
+        if (!mounted.current) return;
+        if (snapshot.empty) {
+          // Auto-seed initial branches if empty
+          if (session.role === "admin") {
+            try {
+              for (const b of INITIAL_BRANCHES) {
+                await setDoc(doc(db, "branches", b.id), {
+                  name: b.name,
+                  isActive: b.isActive,
+                  managerEmail: b.managerEmail || null,
+                  managerName: b.managerName || null,
+                  createdAt: b.createdAt,
+                });
+              }
+            } catch (err) {
+              console.warn("Failed seeding initial branches:", err);
+            }
+          }
+          setBranches(INITIAL_BRANCHES);
+        } else {
+          const list: Branch[] = snapshot.docs.map((docSnap) => {
+            const data = docSnap.data();
+            return {
+              id: docSnap.id,
+              name: data.name,
+              isActive: data.isActive ?? true,
+              managerEmail: data.managerEmail || null,
+              managerName: data.managerName || null,
+              createdAt: data.createdAt,
+            };
+          });
+          setBranches(list);
+        }
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, "branches");
+      },
+    );
+
+    // Reports listener
+    const unsubReports = onSnapshot(
+      collection(db, "reports"),
+      (snapshot) => {
+        if (!mounted.current) return;
+        const list: DailyReport[] = snapshot.docs.map((docSnap) => {
+          const d = docSnap.data();
+          return {
+            id: docSnap.id,
+            branchId: d.branchId,
+            branchName: d.branchName,
+            reportDate: d.reportDate,
+            submittedBy: d.submittedBy,
+            submittedByName: d.submittedByName || "Staff",
+            cashPaise: d.cashPaise,
+            onlinePaise: d.onlinePaise,
+            lines: d.lines || [],
+            status: d.status || "active",
+            voidReason: d.voidReason || null,
+            reviewStatus: d.reviewStatus || "pending",
+            reviewNote: d.reviewNote || null,
+            reviewedByName: d.reviewedByName || null,
+            reviewedAt: d.reviewedAt || null,
+            createdAt: d.createdAt,
+          };
+        });
+        setReports(list);
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, "reports");
+      },
+    );
+
+    // Debts listener
+    const unsubDebts = onSnapshot(
+      collection(db, "debts"),
+      (snapshot) => {
+        if (!mounted.current) return;
+        const list: Debt[] = snapshot.docs.map((docSnap) => {
+          const d = docSnap.data();
+          return {
+            id: docSnap.id,
+            branchId: d.branchId,
+            productName: d.productName,
+            amountPaise: d.amountPaise,
+            debtDate: d.debtDate,
+            source: d.source || "report",
+            voided: d.voided || false,
+            payments: d.payments || [],
+          };
+        });
+        setDebts(list);
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, "debts");
+      },
+    );
+
+    // Staff Invites listener (only loaded for signed in users)
+    const unsubInvites = onSnapshot(
+      collection(db, "invites"),
+      (snapshot) => {
+        if (!mounted.current) return;
+        const list: StaffInvite[] = snapshot.docs.map((docSnap) => {
+          const d = docSnap.data();
+          return {
+            id: docSnap.id,
+            email: d.email,
+            displayName: d.displayName,
+            branchId: d.branchId,
+            branchName: d.branchName,
+            role: d.role || "branch",
+            invitedBy: d.invitedBy || "",
+            status: d.status || "invited",
+            createdAt: d.createdAt,
+          };
+        });
+        setInvites(list);
+      },
+      (error) => {
+        // Non-admin might not list all invites; ignore permissions quietly
+        console.warn("Invites snapshot notice:", error);
+      },
+    );
+
+    return () => {
+      unsubBranches();
+      unsubReports();
+      unsubDebts();
+      unsubInvites();
+    };
+  }, [session]);
+
+  const signInWithGoogle = useCallback(async () => {
+    setError(null);
+    try {
+      const result = await signInWithPopup(auth, googleProvider);
+      if (result.user) {
+        const resolved = await resolveFirebaseUser(result.user);
+        setSession(resolved);
+        return true;
+      }
+      return false;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg);
+      return false;
+    }
+  }, [resolveFirebaseUser]);
 
   const signIn = useCallback(
     async (email: string, password: string) => {
       setError(null);
-      if (!supabase) {
-        setError(
-          "Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY, or continue in demo mode.",
-        );
+      const cleanEmail = email.trim();
+      try {
+        const result = await signInWithEmailAndPassword(auth, cleanEmail, password);
+        if (result.user) {
+          const resolved = await resolveFirebaseUser(result.user);
+          setSession(resolved);
+          return true;
+        }
+        return false;
+      } catch (err: unknown) {
+        const fbErr = err as { code?: string; message?: string };
+        // If account does not exist yet, automatically register and log in
+        if (
+          fbErr.code === "auth/user-not-found" ||
+          fbErr.code === "auth/invalid-credential" ||
+          fbErr.code === "auth/invalid-login-credentials"
+        ) {
+          try {
+            const created = await createUserWithEmailAndPassword(
+              auth,
+              cleanEmail,
+              password,
+            );
+            if (created.user) {
+              const resolved = await resolveFirebaseUser(created.user);
+              setSession(resolved);
+              return true;
+            }
+          } catch (createErr: unknown) {
+            const cMsg =
+              createErr instanceof Error ? createErr.message : String(createErr);
+            setError(cMsg);
+            return false;
+          }
+        }
+        const msg = err instanceof Error ? err.message : String(err);
+        setError(msg);
         return false;
       }
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-      if (signInError) {
-        setError(signInError.message);
-        return false;
-      }
-      await resolveSupabaseSession(supabase);
-      return true;
     },
-    [resolveSupabaseSession, supabase],
+    [resolveFirebaseUser],
   );
 
-  const signInDemo = useCallback((role: "admin" | "branch") => {
-    const user = role === "admin" ? DEMO_USERS.admin : DEMO_USERS.branch;
-    const next: Session = {
-      id: `demo_${role}`,
-      email: user.email,
-      displayName: user.displayName,
-      role: user.role,
-      branchId: user.branchId,
-    };
-    writeJSON(DEMO_SESSION_KEY, next);
-    setSession(next);
-    setError(null);
-  }, []);
-
   const signOut = useCallback(async () => {
-    if (supabase && session && !session.id.startsWith("demo_")) {
-      await supabase.auth.signOut();
-    }
-    if (typeof window !== "undefined") {
-      window.localStorage.removeItem(DEMO_SESSION_KEY);
+    try {
+      await fbSignOut(auth);
+    } catch (err) {
+      console.error("Sign out error:", err);
     }
     setSession(null);
-  }, [session, supabase]);
+  }, []);
 
   const saveReport = useCallback(
     async (input: SaveReportInput) => {
       setError(null);
+      if (!session) {
+        setError("You must be signed in to submit a report.");
+        return false;
+      }
+
       const sections = {
         cash: input.cashPaise,
         online: input.onlinePaise,
@@ -434,244 +500,149 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         others: sumCategory(input.lines, "others"),
       };
 
-      let total: number;
       try {
-        total = computeTotalSale(sections);
+        computeTotalSale(sections);
       } catch {
         setError("Every amount must be a non-negative number of rupees.");
         return false;
       }
 
-      const branch = branches.find((item) => item.id === input.branchId);
+      const branch =
+        branches.find((item) => item.id === input.branchId) ||
+        INITIAL_BRANCHES.find((item) => item.id === input.branchId);
+
       if (!branch) {
         setError("Pick a branch before submitting.");
         return false;
       }
 
-      if (backend === "demo" || !supabase || !session) {
-        const report: DailyReport = {
-          id: makeId("report"),
+      const reportId = makeId("report");
+      const linesWithIds = input.lines.map((line) => ({
+        ...line,
+        id: makeId("line"),
+      }));
+
+      const reportPayload = {
+        branchId: branch.id,
+        branchName: branch.name,
+        reportDate: input.reportDate,
+        submittedBy: session.id,
+        submittedByName: session.displayName || "Branch Staff",
+        cashPaise: input.cashPaise,
+        onlinePaise: input.onlinePaise,
+        lines: linesWithIds,
+        status: "active" as const,
+        reviewStatus: "pending" as const,
+        createdAt: new Date().toISOString(),
+      };
+
+      try {
+        await setDoc(doc(db, "reports", reportId), reportPayload);
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, `reports/${reportId}`);
+      }
+
+      // Add debt records to ledger if present
+      const debtLines = input.lines.filter((line) => line.category === "debt");
+      for (const line of debtLines) {
+        const debtId = makeId("debt");
+        const debtPayload = {
           branchId: branch.id,
-          branchName: branch.name,
-          reportDate: input.reportDate,
-          submittedBy: session?.id ?? "demo",
-          submittedByName: session?.displayName ?? "Demo",
-          cashPaise: input.cashPaise,
-          onlinePaise: input.onlinePaise,
-          lines: input.lines.map((line) => ({ ...line, id: makeId("line") })),
-          status: "active",
-          voidReason: null,
+          productName: line.label || "Credit sale item",
+          amountPaise: line.amountPaise,
+          debtDate: input.reportDate,
+          source: "report" as const,
+          voided: false,
+          payments: [],
           createdAt: new Date().toISOString(),
-          reviewStatus: "pending",
-          reviewNote: null,
-          reviewedByName: null,
-          reviewedAt: null,
         };
-
-        const nextReports = [report, ...reports];
-        const nextDebts = [
-          ...input.lines
-            .filter((line) => line.category === "debt")
-            .map<Debt>((line) => ({
-              id: makeId("debt"),
-              branchId: branch.id,
-              productName: line.label || "Debt item",
-              amountPaise: line.amountPaise,
-              debtDate: input.reportDate,
-              source: "report",
-              voided: false,
-              payments: [],
-            })),
-          ...debts,
-        ];
-
-        setReports(nextReports);
-        setDebts(nextDebts);
-        persistDemo({ reports: nextReports, debts: nextDebts });
-        return true;
-      }
-
-      const reportId = crypto.randomUUID();
-      const { error: reportError } = await supabase.from("daily_reports").insert({
-        id: reportId,
-        branch_id: branch.id,
-        report_date: input.reportDate,
-        submitted_by: session.id,
-        cash_paise: input.cashPaise,
-        online_paise: input.onlinePaise,
-        total_paise: total,
-        finance_count: input.lines.filter((l) => l.category === "finance").length,
-        has_debt: input.lines.some((l) => l.category === "debt"),
-        status: "active",
-        review_status: "pending",
-      });
-
-      if (reportError) {
-        setError(reportError.message);
-        return false;
-      }
-
-      if (input.lines.length > 0) {
-        const { error: linesError } = await supabase.from("report_lines").insert(
-          input.lines.map((line) => ({
-            report_id: reportId,
-            category: line.category,
-            label: line.label,
-            amount_paise: line.amountPaise,
-          })),
-        );
-        if (linesError) {
-          setError(linesError.message);
-          return false;
+        try {
+          await setDoc(doc(db, "debts", debtId), debtPayload);
+        } catch (err) {
+          handleFirestoreError(err, OperationType.CREATE, `debts/${debtId}`);
         }
       }
 
-      const debtLines = input.lines.filter((line) => line.category === "debt");
-      if (debtLines.length > 0) {
-        const { error: debtError } = await supabase.from("debts").insert(
-          debtLines.map((line) => ({
-            branch_id: branch.id,
-            report_id: reportId,
-            source: "report",
-            product_name: line.label,
-            amount_paise: line.amountPaise,
-            debt_date: input.reportDate,
-            created_by: session.id,
-          })),
-        );
-        if (debtError) setError(debtError.message);
-      }
-
-      await loadSupabase(session, supabase);
       return true;
     },
-    [backend, branches, debts, loadSupabase, persistDemo, reports, session, supabase],
+    [branches, session],
   );
 
   const voidReport = useCallback(
     async (reportId: string, reason: string) => {
       setError(null);
-      if (backend === "demo" || !supabase || !session) {
-        const nextReports = reports.map((report) =>
-          report.id === reportId
-            ? { ...report, status: "voided" as const, voidReason: reason }
-            : report,
-        );
-        setReports(nextReports);
-        persistDemo({ reports: nextReports });
-        return true;
-      }
-
-      const { error: voidError } = await supabase
-        .from("daily_reports")
-        .update({
-          status: "voided",
-          void_reason: reason,
-          voided_by: session.id,
-          voided_at: new Date().toISOString(),
-        })
-        .eq("id", reportId);
-
-      if (voidError) {
-        setError(voidError.message);
+      if (session?.role !== "admin") {
+        setError("Only admins can void a filed report.");
         return false;
       }
-      await loadSupabase(session, supabase);
-      return true;
+
+      try {
+        await updateDoc(doc(db, "reports", reportId), {
+          status: "voided",
+          voidReason: reason,
+        });
+        return true;
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `reports/${reportId}`);
+      }
     },
-    [backend, loadSupabase, persistDemo, reports, session, supabase],
+    [session],
   );
 
-  /** Admin review: tick a report OK, or flag a concern against it. */
   const setReportReview = useCallback(
     async (reportId: string, status: ReviewStatus, note: string) => {
       setError(null);
-      const trimmed = note.trim();
+      if (session?.role !== "admin") {
+        setError("Only admins can review reports.");
+        return false;
+      }
 
+      const trimmed = note.trim();
       if (status === "concern" && trimmed.length < 3) {
         setError("Add a short note explaining the concern.");
         return false;
       }
 
-      if (backend === "demo" || !supabase || !session) {
-        const nextReports = reports.map((report) =>
-          report.id === reportId
-            ? {
-                ...report,
-                reviewStatus: status,
-                reviewNote: status === "concern" ? trimmed : null,
-                reviewedByName: session?.displayName ?? "Admin",
-                reviewedAt: new Date().toISOString(),
-              }
-            : report,
-        );
-        setReports(nextReports);
-        persistDemo({ reports: nextReports });
+      try {
+        await updateDoc(doc(db, "reports", reportId), {
+          reviewStatus: status,
+          reviewNote: status === "concern" ? trimmed : null,
+          reviewedByName: session.displayName || "Admin",
+          reviewedAt: new Date().toISOString(),
+        });
         return true;
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `reports/${reportId}`);
       }
-
-      const { error: reviewError } = await supabase
-        .from("daily_reports")
-        .update({
-          review_status: status,
-          review_note: status === "concern" ? trimmed : null,
-          reviewed_by: session.id,
-          reviewed_at: new Date().toISOString(),
-        })
-        .eq("id", reportId);
-
-      if (reviewError) {
-        setError(reviewError.message);
-        return false;
-      }
-      await loadSupabase(session, supabase);
-      return true;
     },
-    [backend, loadSupabase, persistDemo, reports, session, supabase],
+    [session],
   );
 
   const recordDebtPayment = useCallback(
     async (debtId: string, amountPaise: number, note: string) => {
       setError(null);
-      if (backend === "demo" || !supabase || !session) {
-        const nextDebts = debts.map((debt) =>
-          debt.id === debtId
-            ? {
-                ...debt,
-                payments: [
-                  ...debt.payments,
-                  {
-                    id: makeId("pay"),
-                    amountPaise,
-                    paidOn: new Date().toISOString().slice(0, 10),
-                    note: note || null,
-                  },
-                ],
-              }
-            : debt,
-        );
-        setDebts(nextDebts);
-        persistDemo({ debts: nextDebts });
-        return true;
-      }
+      const currentDebt = debts.find((d) => d.id === debtId);
+      const paymentItem = {
+        id: makeId("pay"),
+        amountPaise,
+        paidOn: new Date().toISOString().slice(0, 10),
+        note: note || null,
+      };
 
-      const { error: paymentError } = await supabase
-        .from("debt_payments")
-        .insert({
-          debt_id: debtId,
-          amount_paise: amountPaise,
-          note: note || null,
-          recorded_by: session.id,
+      const updatedPayments = currentDebt
+        ? [...currentDebt.payments, paymentItem]
+        : [paymentItem];
+
+      try {
+        await updateDoc(doc(db, "debts", debtId), {
+          payments: updatedPayments,
         });
-
-      if (paymentError) {
-        setError(paymentError.message);
-        return false;
+        return true;
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `debts/${debtId}`);
       }
-      await loadSupabase(session, supabase);
-      return true;
     },
-    [backend, debts, loadSupabase, persistDemo, session, supabase],
+    [debts],
   );
 
   const addManualDebt = useCallback(
@@ -682,69 +653,179 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       debtDate: string;
     }) => {
       setError(null);
-      if (backend === "demo" || !supabase || !session) {
-        const nextDebts: Debt[] = [
-          {
-            id: makeId("debt"),
-            branchId: input.branchId,
-            productName: input.productName,
-            amountPaise: input.amountPaise,
-            debtDate: input.debtDate,
-            source: "manual",
-            voided: false,
-            payments: [],
-          },
-          ...debts,
-        ];
-        setDebts(nextDebts);
-        persistDemo({ debts: nextDebts });
+      const debtId = makeId("debt");
+      try {
+        await setDoc(doc(db, "debts", debtId), {
+          branchId: input.branchId,
+          productName: input.productName,
+          amountPaise: input.amountPaise,
+          debtDate: input.debtDate,
+          source: "manual" as const,
+          voided: false,
+          payments: [],
+          createdAt: new Date().toISOString(),
+        });
         return true;
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, `debts/${debtId}`);
       }
+    },
+    [],
+  );
 
-      const { error: insertError } = await supabase.from("debts").insert({
-        branch_id: input.branchId,
-        product_name: input.productName,
-        amount_paise: input.amountPaise,
-        debt_date: input.debtDate,
-        source: "manual",
-        created_by: session.id,
-      });
-
-      if (insertError) {
-        setError(insertError.message);
+  const addBranch = useCallback(
+    async (name: string, managerEmail?: string, managerName?: string) => {
+      setError(null);
+      if (session?.role !== "admin") {
+        setError("Only admins can create branches.");
         return false;
       }
-      await loadSupabase(session, supabase);
-      return true;
+
+      const branchId = name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "") || makeId("branch");
+
+      const payload = {
+        name: name.trim(),
+        isActive: true,
+        managerEmail: managerEmail?.trim() || null,
+        managerName: managerName?.trim() || null,
+        createdAt: new Date().toISOString(),
+      };
+
+      try {
+        await setDoc(doc(db, "branches", branchId), payload);
+        // If manager email was supplied, also invite them automatically
+        if (managerEmail && managerEmail.trim()) {
+          const inviteDocId = managerEmail.trim().toLowerCase().replace(/[^a-zA-Z0-9_-]/g, "_");
+          await setDoc(doc(db, "invites", inviteDocId), {
+            email: managerEmail.trim().toLowerCase(),
+            displayName: managerName?.trim() || managerEmail.split("@")[0],
+            branchId,
+            branchName: name.trim(),
+            role: "branch" as const,
+            invitedBy: session.email,
+            status: "invited" as const,
+            createdAt: new Date().toISOString(),
+          });
+        }
+        return true;
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, `branches/${branchId}`);
+      }
     },
-    [backend, debts, loadSupabase, persistDemo, session, supabase],
+    [session],
+  );
+
+  const deleteBranch = useCallback(
+    async (branchId: string) => {
+      setError(null);
+      if (session?.role !== "admin") {
+        setError("Only admins can delete branches.");
+        return false;
+      }
+
+      try {
+        await deleteDoc(doc(db, "branches", branchId));
+        return true;
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, `branches/${branchId}`);
+      }
+    },
+    [session],
+  );
+
+  const inviteStaff = useCallback(
+    async (input: {
+      email: string;
+      displayName: string;
+      branchId: string;
+      role?: "branch" | "admin";
+    }) => {
+      setError(null);
+      if (session?.role !== "admin") {
+        setError("Only admins can invite staff.");
+        return false;
+      }
+
+      const cleanEmail = input.email.trim().toLowerCase();
+      const branch = branches.find((b) => b.id === input.branchId);
+      const inviteId = cleanEmail.replace(/[^a-zA-Z0-9_-]/g, "_");
+
+      const payload = {
+        email: cleanEmail,
+        displayName: input.displayName.trim() || cleanEmail.split("@")[0],
+        branchId: input.branchId,
+        branchName: branch ? branch.name : input.branchId,
+        role: input.role || "branch",
+        invitedBy: session.email,
+        status: "invited" as const,
+        createdAt: new Date().toISOString(),
+      };
+
+      try {
+        await setDoc(doc(db, "invites", inviteId), payload);
+        return true;
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, `invites/${inviteId}`);
+      }
+    },
+    [branches, session],
+  );
+
+  const deleteInvite = useCallback(
+    async (inviteId: string) => {
+      setError(null);
+      if (session?.role !== "admin") {
+        setError("Only admins can delete invites.");
+        return false;
+      }
+
+      try {
+        await deleteDoc(doc(db, "invites", inviteId));
+        return true;
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, `invites/${inviteId}`);
+      }
+    },
+    [session],
   );
 
   const value = useMemo<StoreValue>(
     () => ({
       ready,
-      backend,
+      backend: "firebase",
       session,
-      branches: branches.length > 0 ? branches : backend === "demo" ? DEMO_BRANCHES : [],
+      branches: branches.length > 0 ? branches : INITIAL_BRANCHES,
       reports,
       debts,
+      invites,
       error,
       clearError: () => setError(null),
       signIn,
-      signInDemo,
+      signInWithGoogle,
       signOut,
       saveReport,
       voidReport,
       setReportReview,
       recordDebtPayment,
       addManualDebt,
+      addBranch,
+      deleteBranch,
+      inviteStaff,
+      deleteInvite,
     }),
     [
+      addBranch,
       addManualDebt,
-      backend,
       branches,
       debts,
+      deleteBranch,
+      deleteInvite,
       error,
+      inviteStaff,
+      invites,
       ready,
       recordDebtPayment,
       reports,
@@ -752,7 +833,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       session,
       setReportReview,
       signIn,
-      signInDemo,
+      signInWithGoogle,
       signOut,
       voidReport,
     ],
