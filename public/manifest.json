@@ -1,0 +1,38 @@
+{
+  "id": "/",
+  "name": "SK Tapri — Daily Sales Report",
+  "short_name": "SK Tapri",
+  "description": "Daily sales reporting for SK Tapri branches. Cash, online, finance, debt, and branch sales consolidation.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#fbfaf6",
+  "theme_color": "#144a42",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/pwa-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

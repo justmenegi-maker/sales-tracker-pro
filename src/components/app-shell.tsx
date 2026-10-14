@@ -3,8 +3,10 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { LogOut, Store, LayoutDashboard, ReceiptText } from "lucide-react";
+import { motion } from "motion/react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { PWAInstallButton } from "@/components/pwa-install-button";
 import { useAppStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -66,6 +68,7 @@ export function AppShell({
           </nav>
 
           <div className="ml-auto flex items-center gap-2">
+            <PWAInstallButton size="sm" variant="ghost" />
             <Badge variant="outline" className="text-xs capitalize">
               {session?.role === "admin"
                 ? "Admin"
@@ -89,7 +92,12 @@ export function AppShell({
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-6xl px-4 py-8">
+      <motion.main
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+        className="mx-auto w-full max-w-6xl px-4 py-8"
+      >
         <div className="mb-6 flex flex-col gap-1">
           <h1 className="text-3xl font-semibold tracking-tight">{title}</h1>
           {subtitle ? (
@@ -97,7 +105,7 @@ export function AppShell({
           ) : null}
         </div>
         {children}
-      </main>
+      </motion.main>
     </div>
   );
 }

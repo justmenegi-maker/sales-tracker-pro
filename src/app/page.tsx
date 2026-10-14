@@ -12,6 +12,7 @@ import { TrendChart } from "@/components/trend-chart";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { PWAInstallButton } from "@/components/pwa-install-button";
 import { SECTION_META } from "@/lib/report";
 import { formatINR } from "@/lib/format";
 
@@ -123,6 +124,7 @@ export default function HomePage() {
             </a>
           </nav>
           <div className="ml-auto flex items-center gap-2">
+            <PWAInstallButton variant="outline" size="sm" />
             <Link href="/admin">
               <Button variant="ghost" size="sm" className="hidden sm:inline-flex">
                 Admin
@@ -151,7 +153,7 @@ export default function HomePage() {
               every branch, every debt and every missing report.
             </p>
 
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
               <Link href="/auth/login">
                 <Button size="lg" className="w-full sm:w-auto">
                   Sign in to file today
@@ -166,6 +168,11 @@ export default function HomePage() {
                   Admin overview
                 </Button>
               </Link>
+              <PWAInstallButton
+                size="lg"
+                variant="secondary"
+                className="w-full sm:w-auto"
+              />
             </div>
 
             <dl className="mt-10 grid max-w-lg grid-cols-3 gap-4 border-t pt-6">

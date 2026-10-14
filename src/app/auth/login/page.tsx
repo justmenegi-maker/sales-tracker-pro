@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PWAInstallButton } from "@/components/pwa-install-button";
 import { useAppStore } from "@/lib/store";
 
 const subscribeToUrl = () => () => {};
@@ -71,13 +72,16 @@ export default function LoginPage() {
           aria-hidden
           className="paper-grid pointer-events-none absolute inset-0 opacity-40"
         />
-        <Link
-          href="/"
-          className="relative flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="size-4" />
-          Back to home
-        </Link>
+        <div className="relative flex items-center justify-between">
+          <Link
+            href="/"
+            className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
+          >
+            <ArrowLeft className="size-4" />
+            Back to home
+          </Link>
+          <PWAInstallButton size="sm" variant="ghost" />
+        </div>
 
         <div className="relative max-w-md">
           <span className="grid size-11 place-items-center rounded-lg bg-primary text-primary-foreground">
@@ -104,7 +108,7 @@ export default function LoginPage() {
 
       <div className="flex items-center justify-center px-4 py-12">
         <div className="w-full max-w-md space-y-5">
-          <div className="lg:hidden">
+          <div className="flex items-center justify-between lg:hidden">
             <Link
               href="/"
               className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
@@ -112,6 +116,7 @@ export default function LoginPage() {
               <ArrowLeft className="size-4" />
               Back to home
             </Link>
+            <PWAInstallButton size="sm" variant="ghost" />
           </div>
 
           <Card>

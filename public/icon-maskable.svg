@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGradMask" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#144a42" />
+      <stop offset="100%" stop-color="#0a2a25" />
+    </linearGradient>
+    <linearGradient id="goldGradMask" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f5c26b" />
+      <stop offset="100%" stop-color="#d49228" />
+    </linearGradient>
+  </defs>
+
+  <!-- Full-bleed background for maskable icon -->
+  <rect width="512" height="512" fill="url(#bgGradMask)" />
+
+  <!-- Content scaled inside 80% safe zone (center 410px) -->
+  <g transform="translate(256, 256) scale(0.72) translate(-256, -256)">
+    <g transform="translate(96, 96)">
+      <!-- Ledger Book Base -->
+      <rect x="30" y="50" width="260" height="230" rx="16" fill="#fdfaf3" opacity="0.95" />
+      <line x1="60" y1="95" x2="260" y2="95" stroke="#144a42" stroke-width="5" stroke-dasharray="10 6" opacity="0.4" />
+      <line x1="60" y1="135" x2="260" y2="135" stroke="#144a42" stroke-width="5" opacity="0.3" />
+      <line x1="60" y1="175" x2="260" y2="175" stroke="#144a42" stroke-width="5" opacity="0.3" />
+      <line x1="60" y1="215" x2="260" y2="215" stroke="#144a42" stroke-width="5" opacity="0.3" />
+
+      <!-- Rupee Badge -->
+      <circle cx="230" cy="80" r="38" fill="url(#goldGradMask)" />
+      <text x="230" y="94" font-family="system-ui, -apple-system, sans-serif" font-size="42" font-weight="bold" fill="#144a42" text-anchor="middle">₹</text>
+
+      <!-- Chai Glass Symbol -->
+      <g transform="translate(65, 110)">
+        <path d="M 15 25 L 35 130 C 36 138 43 145 52 145 L 98 145 C 107 145 114 138 115 130 L 135 25 Z" fill="#144a42" />
+        <path d="M 23 45 L 32 110 L 118 110 L 127 45 Z" fill="url(#goldGradMask)" opacity="0.85" />
+        <path d="M 50 15 Q 55 0 65 15" stroke="#f5c26b" stroke-width="6" stroke-linecap="round" fill="none" opacity="0.7" />
+        <path d="M 75 15 Q 80 0 90 15" stroke="#f5c26b" stroke-width="6" stroke-linecap="round" fill="none" opacity="0.7" />
+      </g>
+    </g>
+  </g>
+</svg>
