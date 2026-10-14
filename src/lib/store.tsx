@@ -3,7 +3,9 @@
 /**
  * Single source of truth for SK Tapri Daily Sales workspace.
  *
- * Exclusively powered by Firebase Authentication and Cloud Firestore.
+ * Strict Role-Based Scoping:
+ * - Admin: Full access across all branches, reports, debts, staff invites, and management.
+ * - Branch Manager: Strictly scoped only to view and file for their assigned branch.
  */
 import {
   createContext,
@@ -20,9 +22,12 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
+  query,
   setDoc,
   updateDoc,
+  where,
 } from "firebase/firestore";
 import {
   signInWithEmailAndPassword,
@@ -200,24 +205,44 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     // Check if staff has an invite record by email
     if (!isAdmin && emailLower) {
       try {
-        const inviteDocSnap = await getDoc(doc(db, "invites", emailLower.replace(/[^a-zA-Z0-9_-]/g, "_")));
+        const inviteDocSnap = await getDoc(
+          doc(db, "invites", emailLower.replace(/[^a-zA-Z0-9_-]/g, "_")),
+        );
         if (inviteDocSnap.exists()) {
           const inv = inviteDocSnap.data() as StaffInvite;
           branchId = inv.branchId;
           branchName = inv.branchName;
           profileRole = inv.role || "branch";
-          // Update user doc with assigned branch
           await updateDoc(doc(db, "users", user.uid), {
             branchId: inv.branchId,
             role: profileRole,
           });
-          // Mark invite as active
           await updateDoc(doc(db, "invites", inviteDocSnap.id), {
             status: "active",
           });
         }
       } catch (err) {
         console.warn("Could not check staff invite:", err);
+      }
+
+      // Check if user is assigned as managerEmail on any branch
+      if (!branchId) {
+        try {
+          const branchesSnap = await getDocs(
+            query(collection(db, "branches"), where("managerEmail", "==", emailLower)),
+          );
+          if (!branchesSnap.empty) {
+            const bDoc = branchesSnap.docs[0];
+            branchId = bDoc.id;
+            branchName = bDoc.data().name;
+            await updateDoc(doc(db, "users", user.uid), {
+              branchId,
+              role: "branch",
+            });
+          }
+        } catch (err) {
+          console.warn("Could not check branch managerEmail:", err);
+        }
       }
     }
 
@@ -269,7 +294,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     return () => unsubscribe();
   }, [resolveFirebaseUser]);
 
-  // Firestore Realtime Listeners
+  // Firestore Realtime Listeners (Role-Based Scoped)
   useEffect(() => {
     if (!session) return;
 
@@ -295,7 +320,10 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
               console.warn("Failed seeding initial branches:", err);
             }
           }
-          setBranches(INITIAL_BRANCHES);
+          const seeded = session.role === "admin"
+            ? INITIAL_BRANCHES
+            : INITIAL_BRANCHES.filter((b) => b.id === session.branchId);
+          setBranches(seeded);
         } else {
           const list: Branch[] = snapshot.docs.map((docSnap) => {
             const data = docSnap.data();
@@ -308,7 +336,16 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
               createdAt: data.createdAt,
             };
           });
-          setBranches(list);
+
+          // Branch Manager only sees their assigned branch
+          const visible = session.role === "admin"
+            ? list
+            : list.filter(
+                (b) =>
+                  b.id === session.branchId ||
+                  (b.managerEmail && b.managerEmail.toLowerCase() === session.email.toLowerCase()),
+              );
+          setBranches(visible);
         }
       },
       (error) => {
@@ -316,90 +353,112 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       },
     );
 
-    // Reports listener
-    const unsubReports = onSnapshot(
-      collection(db, "reports"),
-      (snapshot) => {
-        if (!mounted.current) return;
-        const list: DailyReport[] = snapshot.docs.map((docSnap) => {
-          const d = docSnap.data();
-          return {
-            id: docSnap.id,
-            branchId: d.branchId,
-            branchName: d.branchName,
-            reportDate: d.reportDate,
-            submittedBy: d.submittedBy,
-            submittedByName: d.submittedByName || "Staff",
-            cashPaise: d.cashPaise,
-            onlinePaise: d.onlinePaise,
-            lines: d.lines || [],
-            status: d.status || "active",
-            voidReason: d.voidReason || null,
-            reviewStatus: d.reviewStatus || "pending",
-            reviewNote: d.reviewNote || null,
-            reviewedByName: d.reviewedByName || null,
-            reviewedAt: d.reviewedAt || null,
-            createdAt: d.createdAt,
-          };
-        });
-        setReports(list);
-      },
-      (error) => {
-        handleFirestoreError(error, OperationType.LIST, "reports");
-      },
-    );
+    // Reports listener - Scoped strictly to branch for managers
+    const reportsQuery =
+      session.role === "admin"
+        ? collection(db, "reports")
+        : session.branchId
+          ? query(collection(db, "reports"), where("branchId", "==", session.branchId))
+          : null;
 
-    // Debts listener
-    const unsubDebts = onSnapshot(
-      collection(db, "debts"),
-      (snapshot) => {
-        if (!mounted.current) return;
-        const list: Debt[] = snapshot.docs.map((docSnap) => {
-          const d = docSnap.data();
-          return {
-            id: docSnap.id,
-            branchId: d.branchId,
-            productName: d.productName,
-            amountPaise: d.amountPaise,
-            debtDate: d.debtDate,
-            source: d.source || "report",
-            voided: d.voided || false,
-            payments: d.payments || [],
-          };
-        });
-        setDebts(list);
-      },
-      (error) => {
-        handleFirestoreError(error, OperationType.LIST, "debts");
-      },
-    );
+    let unsubReports = () => {};
+    if (reportsQuery) {
+      unsubReports = onSnapshot(
+        reportsQuery,
+        (snapshot) => {
+          if (!mounted.current) return;
+          const list: DailyReport[] = snapshot.docs.map((docSnap) => {
+            const d = docSnap.data();
+            return {
+              id: docSnap.id,
+              branchId: d.branchId,
+              branchName: d.branchName,
+              reportDate: d.reportDate,
+              submittedBy: d.submittedBy,
+              submittedByName: d.submittedByName || "Staff",
+              cashPaise: d.cashPaise,
+              onlinePaise: d.onlinePaise,
+              lines: d.lines || [],
+              status: d.status || "active",
+              voidReason: d.voidReason || null,
+              reviewStatus: d.reviewStatus || "pending",
+              reviewNote: d.reviewNote || null,
+              reviewedByName: d.reviewedByName || null,
+              reviewedAt: d.reviewedAt || null,
+              createdAt: d.createdAt,
+            };
+          });
+          setReports(list);
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.LIST, "reports");
+        },
+      );
+    }
 
-    // Staff Invites listener (only loaded for signed in users)
-    const unsubInvites = onSnapshot(
-      collection(db, "invites"),
-      (snapshot) => {
-        if (!mounted.current) return;
-        const list: StaffInvite[] = snapshot.docs.map((docSnap) => {
-          const d = docSnap.data();
-          return {
-            id: docSnap.id,
-            email: d.email,
-            displayName: d.displayName,
-            branchId: d.branchId,
-            branchName: d.branchName,
-            role: d.role || "branch",
-            invitedBy: d.invitedBy || "",
-            status: d.status || "invited",
-            createdAt: d.createdAt,
-          };
-        });
-        setInvites(list);
-      },
-      (error) => {
-        // Non-admin might not list all invites; ignore permissions quietly
-        console.warn("Invites snapshot notice:", error);
-      },
-    );
+    // Debts listener - Scoped strictly to branch for managers
+    const debtsQuery =
+      session.role === "admin"
+        ? collection(db, "debts")
+        : session.branchId
+          ? query(collection(db, "debts"), where("branchId", "==", session.branchId))
+          : null;
+
+    let unsubDebts = () => {};
+    if (debtsQuery) {
+      unsubDebts = onSnapshot(
+        debtsQuery,
+        (snapshot) => {
+          if (!mounted.current) return;
+          const list: Debt[] = snapshot.docs.map((docSnap) => {
+            const d = docSnap.data();
+            return {
+              id: docSnap.id,
+              branchId: d.branchId,
+              productName: d.productName,
+              amountPaise: d.amountPaise,
+              debtDate: d.debtDate,
+              source: d.source || "report",
+              voided: d.voided || false,
+              payments: d.payments || [],
+            };
+          });
+          setDebts(list);
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.LIST, "debts");
+        },
+      );
+    }
+
+    // Staff Invites listener (Only loaded for Admin)
+    let unsubInvites = () => {};
+    if (session.role === "admin") {
+      unsubInvites = onSnapshot(
+        collection(db, "invites"),
+        (snapshot) => {
+          if (!mounted.current) return;
+          const list: StaffInvite[] = snapshot.docs.map((docSnap) => {
+            const d = docSnap.data();
+            return {
+              id: docSnap.id,
+              email: d.email,
+              displayName: d.displayName,
+              branchId: d.branchId,
+              branchName: d.branchName,
+              role: d.role || "branch",
+              invitedBy: d.invitedBy || "",
+              status: d.status || "invited",
+              createdAt: d.createdAt,
+            };
+          });
+          setInvites(list);
+        },
+        (error) => {
+          console.warn("Invites snapshot notice:", error);
+        },
+      );
+    }
 
     return () => {
       unsubBranches();
@@ -440,7 +499,6 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         return false;
       } catch (err: unknown) {
         const fbErr = err as { code?: string; message?: string };
-        // If account does not exist yet, automatically register and log in
         if (
           fbErr.code === "auth/user-not-found" ||
           fbErr.code === "auth/invalid-credential" ||
@@ -486,6 +544,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       setError(null);
       if (!session) {
         setError("You must be signed in to submit a report.");
+        return false;
+      }
+
+      // Branch Manager cannot file for a different branch
+      if (session.role === "branch" && session.branchId && input.branchId !== session.branchId) {
+        setError("You are only authorized to file reports for your assigned branch.");
         return false;
       }
 
@@ -653,6 +717,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       debtDate: string;
     }) => {
       setError(null);
+      // Branch Manager cannot add debt for another branch
+      if (session?.role === "branch" && session.branchId && input.branchId !== session.branchId) {
+        setError("You can only record debts for your assigned branch.");
+        return false;
+      }
+
       const debtId = makeId("debt");
       try {
         await setDoc(doc(db, "debts", debtId), {
@@ -670,7 +740,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         handleFirestoreError(err, OperationType.CREATE, `debts/${debtId}`);
       }
     },
-    [],
+    [session],
   );
 
   const addBranch = useCallback(
@@ -696,7 +766,6 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
       try {
         await setDoc(doc(db, "branches", branchId), payload);
-        // If manager email was supplied, also invite them automatically
         if (managerEmail && managerEmail.trim()) {
           const inviteDocId = managerEmail.trim().toLowerCase().replace(/[^a-zA-Z0-9_-]/g, "_");
           await setDoc(doc(db, "invites", inviteDocId), {
@@ -797,7 +866,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       ready,
       backend: "firebase",
       session,
-      branches: branches.length > 0 ? branches : INITIAL_BRANCHES,
+      branches,
       reports,
       debts,
       invites,

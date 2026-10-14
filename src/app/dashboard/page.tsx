@@ -101,6 +101,15 @@ function DashboardBody() {
   return (
     <AppShell title="Daily sales report" subtitle={branchSubtitle}>
       <div className="space-y-6">
+        {session?.role === "branch" && !session?.branchId ? (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-900">
+            <p className="font-semibold">Branch Assignment Pending</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Your account ({session.email}) has not been assigned to a branch yet. Please ask an admin (justmenegi@gmail.com) to assign your Gmail in the Admin portal.
+            </p>
+          </div>
+        ) : null}
+
         {session?.role === "admin" ? (
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">

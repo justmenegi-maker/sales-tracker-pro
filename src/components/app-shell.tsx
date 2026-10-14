@@ -45,7 +45,7 @@ export function AppShell({
           </Link>
 
           <nav className="ml-2 flex items-center gap-1">
-            {NAV.map((item) => {
+            {NAV.filter((item) => item.href !== "/admin" || session?.role === "admin").map((item) => {
               const active = pathname === item.href;
               return (
                 <Link
