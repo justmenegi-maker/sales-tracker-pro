@@ -36,7 +36,7 @@ function initialLines(): LineDraft[] {
 }
 
 export function ReportForm() {
-  const { session, branches, reports, saveReport } = useAppStore();
+  const { session, branches, reports, saveReport, error: storeError } = useAppStore();
   const [reportDate, setReportDate] = useState(todayISO());
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
   const branchId = selectedBranchId ?? (session?.branchId || branches[0]?.id || "");
@@ -128,7 +128,7 @@ export function ReportForm() {
       );
       reset();
     } else {
-      toast.error("Could not file the report. Check the amounts and try again.");
+      toast.error(storeError || "Could not file the report. Check the amounts and try again.");
     }
   }
 
