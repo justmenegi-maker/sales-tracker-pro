@@ -178,9 +178,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     // Check if staff has an invite record by email
     if (!isAdmin && emailLower) {
       try {
-        const inviteDocSnap = await getDoc(
-          doc(db, "invites", emailLower.replace(/[^a-zA-Z0-9_-]/g, "_")),
-        );
+        const inviteDocSnap = await getDoc(doc(db, "invites", emailLower));
         if (inviteDocSnap.exists()) {
           const inv = inviteDocSnap.data() as StaffInvite;
           branchId = inv.branchId;
@@ -470,9 +468,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
               return true;
             }
           } catch (createErr: unknown) {
-            const cMsg =
-              createErr instanceof Error ? createErr.message : String(createErr);
-            setError(cMsg);
+            const cErr = createErr as { code?: string; message?: string };
+            setError(
+              cErr.code === "auth/email-already-in-use"
+                ? "Incorrect email or password."
+                : cErr.message || "Could not sign in.",
+            );
             return false;
           }
         }
@@ -719,7 +720,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       try {
         await setDoc(doc(db, "branches", branchId), payload);
         if (managerEmail && managerEmail.trim()) {
-          const inviteDocId = managerEmail.trim().toLowerCase().replace(/[^a-zA-Z0-9_-]/g, "_");
+          const inviteDocId = managerEmail.trim().toLowerCase();
           await setDoc(doc(db, "invites", inviteDocId), {
             email: managerEmail.trim().toLowerCase(),
             displayName: managerName?.trim() || managerEmail.split("@")[0],
@@ -772,7 +773,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
       const cleanEmail = input.email.trim().toLowerCase();
       const branch = branches.find((b) => b.id === input.branchId);
-      const inviteId = cleanEmail.replace(/[^a-zA-Z0-9_-]/g, "_");
+      const inviteId = cleanEmail;
 
       const payload = {
         email: cleanEmail,
