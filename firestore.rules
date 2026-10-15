@@ -29,6 +29,16 @@ service cloud.firestore {
       );
     }
 
+    function myProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function myBranchId() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        ? myProfile().branchId
+        : null;
+    }
+
     function isValidAdmin(data) {
       return data.keys().hasAll(['email', 'createdAt']) &&
              data.keys().hasOnly(['email', 'createdAt']) &&
@@ -118,21 +128,27 @@ service cloud.firestore {
     }
 
     match /invites/{inviteId} {
-      allow get, list: if isSignedIn();
+      allow get: if isSignedIn() && (isAdmin() || resource.data.email == request.auth.token.email);
+      allow list: if isAdmin();
       allow create, update, delete: if isAdmin() && isValidId(inviteId) && isValidStaffInvite(incoming());
     }
 
     match /branches/{branchId} {
-      allow get, list: if isSignedIn();
+      allow get, list: if isSignedIn() && (
+        isAdmin() ||
+        branchId == myBranchId() ||
+        (resource.data.managerEmail != null && resource.data.managerEmail == request.auth.token.email)
+      );
       allow create, update: if isAdmin() && isValidId(branchId) && isValidBranch(incoming());
       allow delete: if isAdmin() && isValidId(branchId);
     }
 
     match /reports/{reportId} {
-      allow get, list: if isSignedIn();
+      allow get, list: if isSignedIn() && (isAdmin() || resource.data.branchId == myBranchId());
       allow create: if isSignedIn() && isValidId(reportId) &&
                     incoming().submittedBy == request.auth.uid &&
-                    isValidDailyReport(incoming());
+                    isValidDailyReport(incoming()) &&
+                    (isAdmin() || incoming().branchId == myBranchId());
       allow update: if isSignedIn() && isValidId(reportId) && isValidDailyReport(incoming()) && (
         isAdmin() ||
         (existing().status == 'active' &&
@@ -143,11 +159,13 @@ service cloud.firestore {
     }
 
     match /debts/{debtId} {
-      allow get, list: if isSignedIn();
-      allow create: if isSignedIn() && isValidId(debtId) && isValidDebt(incoming());
+      allow get, list: if isSignedIn() && (isAdmin() || resource.data.branchId == myBranchId());
+      allow create: if isSignedIn() && isValidId(debtId) && isValidDebt(incoming()) &&
+                    (isAdmin() || incoming().branchId == myBranchId());
       allow update: if isSignedIn() && isValidId(debtId) && isValidDebt(incoming()) && (
         isAdmin() ||
-        incoming().diff(existing()).affectedKeys().hasOnly(['payments'])
+        (existing().branchId == myBranchId() &&
+         incoming().diff(existing()).affectedKeys().hasOnly(['payments']))
       );
       allow delete: if isAdmin() && isValidId(debtId);
     }
