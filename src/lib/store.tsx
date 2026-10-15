@@ -556,7 +556,17 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       try {
         await setDoc(doc(db, "reports", reportId), reportPayload);
       } catch (err) {
-        handleFirestoreError(err, OperationType.CREATE, `reports/${reportId}`);
+        try {
+          handleFirestoreError(err, OperationType.CREATE, `reports/${reportId}`);
+        } catch (logged) {
+          const msg = logged instanceof Error ? logged.message : String(logged);
+          setError(
+            msg.includes("permission-denied")
+              ? "You don't have permission to file for this branch. Ask an admin to check your branch assignment."
+              : "Could not save the report. Please try again.",
+          );
+        }
+        return false;
       }
 
       // Add debt records to ledger if present
@@ -576,7 +586,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         try {
           await setDoc(doc(db, "debts", debtId), debtPayload);
         } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, `debts/${debtId}`);
+          console.error("Could not save debt ledger entry:", err);
         }
       }
 
