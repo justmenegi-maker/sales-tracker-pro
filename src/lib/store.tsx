@@ -113,33 +113,6 @@ type StoreValue = {
 
 const BOOTSTRAP_ADMIN_EMAIL = "justmenegi@gmail.com";
 
-const INITIAL_BRANCHES: Branch[] = [
-  {
-    id: "kaza",
-    name: "SK Kaza Main Market",
-    isActive: true,
-    managerEmail: "justmenegi@gmail.com",
-    managerName: "Admin",
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: "tabo",
-    name: "SK Tabo Gompa",
-    isActive: true,
-    managerEmail: null,
-    managerName: null,
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: "cp",
-    name: "SK Tapri Connaught Place",
-    isActive: true,
-    managerEmail: null,
-    managerName: null,
-    createdAt: new Date().toISOString(),
-  },
-];
-
 const StoreContext = createContext<StoreValue | null>(null);
 
 export function AppStoreProvider({ children }: { children: ReactNode }) {
@@ -304,26 +277,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       async (snapshot) => {
         if (!mounted.current) return;
         if (snapshot.empty) {
-          // Auto-seed initial branches if empty
-          if (session.role === "admin") {
-            try {
-              for (const b of INITIAL_BRANCHES) {
-                await setDoc(doc(db, "branches", b.id), {
-                  name: b.name,
-                  isActive: b.isActive,
-                  managerEmail: b.managerEmail || null,
-                  managerName: b.managerName || null,
-                  createdAt: b.createdAt,
-                });
-              }
-            } catch (err) {
-              console.warn("Failed seeding initial branches:", err);
-            }
-          }
-          const seeded = session.role === "admin"
-            ? INITIAL_BRANCHES
-            : INITIAL_BRANCHES.filter((b) => b.id === session.branchId);
-          setBranches(seeded);
+          setBranches([]);
         } else {
           const list: Branch[] = snapshot.docs.map((docSnap) => {
             const data = docSnap.data();
@@ -571,9 +525,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         return false;
       }
 
-      const branch =
-        branches.find((item) => item.id === input.branchId) ||
-        INITIAL_BRANCHES.find((item) => item.id === input.branchId);
+      const branch = branches.find((item) => item.id === input.branchId);
 
       if (!branch) {
         setError("Pick a branch before submitting.");

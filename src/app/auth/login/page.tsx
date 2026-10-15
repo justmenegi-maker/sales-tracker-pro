@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
-import { ArrowLeft, KeyRound, ShieldCheck, Store } from "lucide-react";
+import { ArrowLeft, ShieldCheck, Store } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -32,8 +32,8 @@ export default function LoginPage() {
   const returnTo = requested?.startsWith("/") ? requested : null;
   const wantsAdmin = params.get("role") === "admin";
 
-  const [email, setEmail] = useState("justmenegi@gmail.com");
-  const [password, setPassword] = useState("mango123");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
 
@@ -212,27 +212,6 @@ export default function LoginPage() {
                 <Button type="submit" className="w-full" disabled={submitting}>
                   {submitting ? "Signing in…" : "Sign in"}
                 </Button>
-
-                <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground flex items-center justify-between">
-                  <div>
-                    <span className="font-semibold text-foreground">Admin:</span> justmenegi@gmail.com
-                    <span className="mx-1">/</span>
-                    <span className="font-mono">mango123</span>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 px-2 text-xs"
-                    onClick={() => {
-                      setEmail("justmenegi@gmail.com");
-                      setPassword("mango123");
-                    }}
-                  >
-                    <KeyRound className="size-3 mr-1" />
-                    Fill
-                  </Button>
-                </div>
               </form>
 
               <div className="border-t pt-3 text-center text-xs text-muted-foreground">

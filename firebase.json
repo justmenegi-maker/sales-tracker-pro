@@ -1,0 +1,8 @@
+{
+  "firestore": [
+    {
+      "database": "ai-studio-salestrackerpro-07460d88-9ad4-4b10-a1c2-6ec9f7255c79",
+      "rules": "firestore.rules"
+    }
+  ]
+}
