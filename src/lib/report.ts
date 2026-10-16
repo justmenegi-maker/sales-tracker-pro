@@ -195,6 +195,42 @@ export function reportsForDate(
   );
 }
 
+/**
+ * The branch a queued report belongs to.
+ *
+ * `branches` only holds what the Firestore listener has delivered so far, and a
+ * branch login must not be blocked while that is still on the wire. The
+ * assignment in the session (`branchId`, plus the branch name the invite
+ * carried) is the pair the security rules compare a filed report against, so it
+ * is authoritative for the caller's own branch. Anyone filing for a branch they
+ * are not assigned to still has to pick it from the loaded list.
+ */
+export function resolveFilingBranch(input: {
+  branchId: string;
+  branches: Branch[];
+  session: {
+    role: "admin" | "branch";
+    branchId: string | null;
+    branchName?: string | null;
+  } | null;
+}): Branch | null {
+  const { branchId, branches, session } = input;
+  if (!branchId) return null;
+
+  const loaded = branches.find((branch) => branch.id === branchId);
+  if (loaded) return loaded;
+
+  if (session?.role === "branch" && session.branchId === branchId) {
+    return {
+      id: branchId,
+      name: session.branchName?.trim() || branchId,
+      isActive: true,
+    };
+  }
+
+  return null;
+}
+
 export const REVIEW_META: Array<{
   key: ReviewStatus;
   label: string;

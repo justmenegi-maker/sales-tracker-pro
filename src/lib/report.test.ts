@@ -6,6 +6,7 @@ import {
   reportFinanceCount,
   reportTotalPaise,
   reportsForDate,
+  resolveFilingBranch,
   reviewCounts,
   sectionTotals,
   summarizeReports,
@@ -14,7 +15,7 @@ import {
   trendSeries,
   withinRange,
 } from "./report";
-import type { DailyReport, Debt } from "./report";
+import type { Branch, DailyReport, Debt } from "./report";
 
 function report(overrides: Partial<DailyReport> = {}): DailyReport {
   return {
@@ -207,5 +208,67 @@ describe("debt derivation", () => {
     });
     expect(debtOutstandingPaise(overpaid)).toBe(0);
     expect(deriveDebtStatus(overpaid)).toBe("cleared");
+  });
+});
+
+describe("resolveFilingBranch", () => {
+  const kaza: Branch = { id: "branch_kaza", name: "SK Kaza", isActive: true };
+
+  it("uses the loaded branch document when it has arrived", () => {
+    expect(
+      resolveFilingBranch({
+        branchId: "branch_kaza",
+        branches: [kaza],
+        session: { role: "admin", branchId: null },
+      }),
+    ).toBe(kaza);
+  });
+
+  it("still resolves a branch login's own branch before that document loads", () => {
+    // The reported bug: the branch listener had been denied, so `branches` was
+    // empty and filing was refused with "Pick a branch before submitting".
+    expect(
+      resolveFilingBranch({
+        branchId: "branch_kaza",
+        branches: [],
+        session: { role: "branch", branchId: "branch_kaza", branchName: "SK Kaza" },
+      }),
+    ).toEqual({ id: "branch_kaza", name: "SK Kaza", isActive: true });
+  });
+
+  it("falls back to the branch id when the session carries no branch name", () => {
+    expect(
+      resolveFilingBranch({
+        branchId: "branch_kaza",
+        branches: [],
+        session: { role: "branch", branchId: "branch_kaza", branchName: null },
+      })?.name,
+    ).toBe("branch_kaza");
+  });
+
+  it("refuses a branch login filing for another branch", () => {
+    expect(
+      resolveFilingBranch({
+        branchId: "branch_spillow",
+        branches: [],
+        session: { role: "branch", branchId: "branch_kaza", branchName: "SK Kaza" },
+      }),
+    ).toBeNull();
+  });
+
+  it("refuses an admin filing for a branch that is not loaded", () => {
+    expect(
+      resolveFilingBranch({
+        branchId: "branch_ghost",
+        branches: [kaza],
+        session: { role: "admin", branchId: null },
+      }),
+    ).toBeNull();
+  });
+
+  it("refuses when no branch has been chosen", () => {
+    expect(
+      resolveFilingBranch({ branchId: "", branches: [kaza], session: null }),
+    ).toBeNull();
   });
 });

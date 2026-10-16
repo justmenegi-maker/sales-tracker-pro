@@ -119,17 +119,25 @@ export function ReportForm() {
     };
 
     setSaving(true);
-    const ok = await saveReport(payload);
+    const result = await saveReport(payload);
     setSaving(false);
 
-    if (ok) {
-      toast.success(
-        `Report filed for ${formatDateLabel(reportDate)} — ${formatINR(total)}`,
-      );
-      reset();
-    } else {
-      toast.error("Could not file the report. Check the amounts and try again.");
+    if (!result.filed) {
+      // The store knows exactly what went wrong (no branch assignment, a write
+      // Firestore refused, amounts out of range). Blaming the amounts for every
+      // failure is what sent branch staff looking at numbers that were fine.
+      toast.error(result.error ?? "Could not file the report. Try again.");
+      return;
     }
+
+    toast.success(
+      `Report filed for ${formatDateLabel(reportDate)} — ${formatINR(total)}`,
+    );
+
+    // A debt row that never reached the ledger is worth saying out loud.
+    if (result.error) toast.warning(result.error);
+
+    reset();
   }
 
   return (

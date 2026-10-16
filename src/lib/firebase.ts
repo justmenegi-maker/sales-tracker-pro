@@ -46,12 +46,12 @@ export const db: Firestore = getFirestore(app, firebaseConfig.firestoreDatabaseI
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
-export function handleFirestoreError(
+function buildFirestoreErrorInfo(
   error: unknown,
   operationType: OperationType,
   path: string | null,
-): never {
-  const errInfo: FirestoreErrorInfo = {
+): FirestoreErrorInfo {
+  return {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
       userId: auth.currentUser?.uid,
@@ -68,8 +68,48 @@ export function handleFirestoreError(
     operationType,
     path,
   };
+}
+
+export function handleFirestoreError(
+  error: unknown,
+  operationType: OperationType,
+  path: string | null,
+): never {
+  const errInfo = buildFirestoreErrorInfo(error, operationType, path);
   console.error("Firestore Error: ", JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
+}
+
+/**
+ * Logs a Firestore failure in the same structured shape as
+ * `handleFirestoreError`, and returns something worth showing the person who
+ * pressed the button.
+ *
+ * A write that a click handler awaits must come back as a result the handler can
+ * display: `handleFirestoreError` throws, and a throw out of a click handler
+ * leaves the form stuck on "Filing…" with no message at all.
+ */
+export function firestoreErrorMessage(
+  error: unknown,
+  operationType: OperationType,
+  path: string | null,
+  action: string,
+): string {
+  console.error(
+    "Firestore Error: ",
+    JSON.stringify(buildFirestoreErrorInfo(error, operationType, path)),
+  );
+
+  const code = (error as { code?: string } | null | undefined)?.code ?? "";
+  if (code === "permission-denied") {
+    return `Firestore refused to ${action}. Your account may not be linked to a branch yet, so ask an admin to check your branch assignment.`;
+  }
+  if (code === "unavailable" || code === "deadline-exceeded") {
+    return `Could not reach Firestore to ${action}. Check the connection and try again.`;
+  }
+
+  const detail = error instanceof Error ? error.message : String(error);
+  return `Could not ${action}. ${detail}`;
 }
 
 export async function testConnection(): Promise<void> {

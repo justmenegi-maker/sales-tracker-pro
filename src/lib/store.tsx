@@ -28,6 +28,8 @@ import {
   setDoc,
   updateDoc,
   where,
+  type DocumentData,
+  type DocumentSnapshot,
 } from "firebase/firestore";
 import {
   signInWithEmailAndPassword,
@@ -36,6 +38,7 @@ import {
 import {
   auth,
   db,
+  firestoreErrorMessage,
   googleProvider,
   handleFirestoreError,
   OperationType,
@@ -44,7 +47,7 @@ import {
   onAuthStateChanged,
   type User,
 } from "./firebase";
-import { makeId } from "./report";
+import { makeId, resolveFilingBranch } from "./report";
 import type {
   Branch,
   DailyReport,
@@ -65,6 +68,17 @@ export type Session = {
   branchName?: string | null;
 };
 
+/**
+ * Outcome of filing a day's report.
+ *
+ * `filed` is true once the report document itself is in Firestore; `error` then
+ * only carries a caveat, such as a debt row that never reached the ledger.
+ */
+export type FileReportResult = {
+  filed: boolean;
+  error: string | null;
+};
+
 type StoreValue = {
   ready: boolean;
   backend: "firebase";
@@ -78,7 +92,7 @@ type StoreValue = {
   signIn: (email: string, password: string) => Promise<boolean>;
   signInWithGoogle: () => Promise<boolean>;
   signOut: () => Promise<void>;
-  saveReport: (input: SaveReportInput) => Promise<boolean>;
+  saveReport: (input: SaveReportInput) => Promise<FileReportResult>;
   voidReport: (reportId: string, reason: string) => Promise<boolean>;
   setReportReview: (
     reportId: string,
@@ -112,6 +126,19 @@ type StoreValue = {
 };
 
 const BOOTSTRAP_ADMIN_EMAIL = "justmenegi@gmail.com";
+
+/** One Firestore branch document, as the UI understands a branch. */
+function toBranch(docSnap: DocumentSnapshot<DocumentData>): Branch {
+  const data = docSnap.data() ?? {};
+  return {
+    id: docSnap.id,
+    name: data.name,
+    isActive: data.isActive ?? true,
+    managerEmail: data.managerEmail || null,
+    managerName: data.managerName || null,
+    createdAt: data.createdAt,
+  };
+}
 
 const StoreContext = createContext<StoreValue | null>(null);
 
@@ -269,41 +296,41 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!session) return;
 
-    // Branches listener
-    const unsubBranches = onSnapshot(
-      collection(db, "branches"),
-      async (snapshot) => {
-        if (!mounted.current) return;
-        if (snapshot.empty) {
-          setBranches([]);
-        } else {
-          const list: Branch[] = snapshot.docs.map((docSnap) => {
-            const data = docSnap.data();
-            return {
-              id: docSnap.id,
-              name: data.name,
-              isActive: data.isActive ?? true,
-              managerEmail: data.managerEmail || null,
-              managerName: data.managerName || null,
-              createdAt: data.createdAt,
-            };
-          });
-
-          // Branch Manager only sees their assigned branch
-          const visible = session.role === "admin"
-            ? list
-            : list.filter(
-                (b) =>
-                  b.id === session.branchId ||
-                  (b.managerEmail && b.managerEmail.toLowerCase() === session.email.toLowerCase()),
-              );
-          setBranches(visible);
-        }
-      },
-      (error) => {
-        handleFirestoreError(error, OperationType.LIST, "branches");
-      },
-    );
+    // Branches listener.
+    //
+    // Firestore rules are not filters: a query has to be allowed for every
+    // document it could return. `firestore.rules` grants branch reads to admins,
+    // to the caller's own branch, and to a branch whose `managerEmail` is the
+    // caller — so an unfiltered `collection(db, "branches")` is *denied* for a
+    // branch login. That denial is why a branch could not file a report: the
+    // listener errored, `branches` stayed empty, and filing then failed with
+    // "Pick a branch before submitting". A branch login therefore listens to its
+    // own branch document, which the rules allow because the request binds the
+    // document ID. Administrators keep the whole collection.
+    let unsubBranches = () => {};
+    if (session.role === "admin") {
+      unsubBranches = onSnapshot(
+        collection(db, "branches"),
+        (snapshot) => {
+          if (!mounted.current) return;
+          setBranches(snapshot.docs.map(toBranch));
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.LIST, "branches");
+        },
+      );
+    } else if (session.branchId) {
+      unsubBranches = onSnapshot(
+        doc(db, "branches", session.branchId),
+        (snapshot) => {
+          if (!mounted.current) return;
+          setBranches(snapshot.exists() ? [toBranch(snapshot)] : []);
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.GET, `branches/${session.branchId}`);
+        },
+      );
+    }
 
     // Reports listener - Scoped strictly to branch for managers
     const reportsQuery =
@@ -497,15 +524,18 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const saveReport = useCallback(
     async (input: SaveReportInput) => {
       setError(null);
+      const failure = (message: string): FileReportResult => {
+        setError(message);
+        return { filed: false, error: message };
+      };
+
       if (!session) {
-        setError("You must be signed in to submit a report.");
-        return false;
+        return failure("You must be signed in to submit a report.");
       }
 
       // Branch Manager cannot file for a different branch
       if (session.role === "branch" && session.branchId && input.branchId !== session.branchId) {
-        setError("You are only authorized to file reports for your assigned branch.");
-        return false;
+        return failure("You are only authorized to file reports for your assigned branch.");
       }
 
       const sections = {
@@ -522,15 +552,17 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       try {
         computeTotalSale(sections);
       } catch {
-        setError("Every amount must be a non-negative number of rupees.");
-        return false;
+        return failure("Every amount must be a non-negative number of rupees.");
       }
 
-      const branch = branches.find((item) => item.id === input.branchId);
+      const branch = resolveFilingBranch({
+        branchId: input.branchId,
+        branches,
+        session,
+      });
 
       if (!branch) {
-        setError("Pick a branch before submitting.");
-        return false;
+        return failure("Pick a branch before submitting.");
       }
 
       const reportId = makeId("report");
@@ -556,11 +588,22 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       try {
         await setDoc(doc(db, "reports", reportId), reportPayload);
       } catch (err) {
-        handleFirestoreError(err, OperationType.CREATE, `reports/${reportId}`);
+        return failure(
+          firestoreErrorMessage(
+            err,
+            OperationType.CREATE,
+            `reports/${reportId}`,
+            "file this report",
+          ),
+        );
       }
 
-      // Add debt records to ledger if present
+      // Add debt records to ledger if present.
+      //
+      // The debt rows are already part of the report saved above, so a ledger
+      // write that fails is a caveat on a filed report, not a failed filing.
       const debtLines = input.lines.filter((line) => line.category === "debt");
+      let ledgerError: string | null = null;
       for (const line of debtLines) {
         const debtId = makeId("debt");
         const debtPayload = {
@@ -576,11 +619,24 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         try {
           await setDoc(doc(db, "debts", debtId), debtPayload);
         } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, `debts/${debtId}`);
+          ledgerError =
+            ledgerError ??
+            firestoreErrorMessage(
+              err,
+              OperationType.CREATE,
+              `debts/${debtId}`,
+              "add the debt to the ledger",
+            );
         }
       }
 
-      return true;
+      if (ledgerError) {
+        const caveat = `The report was filed, but ${ledgerError}`;
+        setError(caveat);
+        return { filed: true, error: caveat };
+      }
+
+      return { filed: true, error: null };
     },
     [branches, session],
   );
