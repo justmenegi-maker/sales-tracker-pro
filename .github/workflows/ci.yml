@@ -8,9 +8,10 @@ name: CI
 # Install uses npm and the tracked `package-lock.json`; the build needs no
 # secrets — without the Supabase keys the app builds in demo mode.
 
+# Every branch, not just main: this repository has more than one line of work in
+# flight, and a branch should be checkable before anyone has to review it.
 on:
   push:
-    branches: [main]
   pull_request:
 
 permissions:
