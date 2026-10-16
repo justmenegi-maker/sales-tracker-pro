@@ -1,12 +1,16 @@
 name: CI
 
-# The same checks the README lists, run on every push and pull request, so a
-# broken report form cannot land on `main` unnoticed.
+# The checks the README lists, on the same toolchain the app is deployed with:
 #
-#   npm ci → lint → tsc --noEmit → vitest run → next build (static export)
+#   bun install --frozen-lockfile → lint → tsc --noEmit → vitest run
+#                                 → next build (static export to dist/)
 #
-# Install uses npm and the tracked `package-lock.json`; the build needs no
-# secrets — without the Supabase keys the app builds in demo mode.
+# Bun rather than npm on purpose: the hosting install command is `bun install`
+# and the build command is `bun run build`, so CI validates what actually ships.
+# (`package-lock.json` is the older lockfile and is not complete enough for a
+# strict `npm ci` on recent npm — `bun.lock` is the source of truth.)
+#
+# No secrets are needed: without the Supabase keys the app builds in demo mode.
 
 # Every branch, not just main: this repository has more than one line of work in
 # flight, and a branch should be checkable before anyone has to review it.
@@ -26,26 +30,25 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      # v7 of both actions runs on Node 24; the v4 pins were being forced onto
-      # a newer runtime and warned about it on every run.
+      # v7 runs on Node 24; the v4 pins were being forced onto a newer runtime
+      # and warned about it on every run.
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v7
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: 24
-          cache: npm
+          bun-version: 1.4.2
 
       - name: Install
-        run: npm ci --no-audit --no-fund
+        run: bun install --frozen-lockfile
 
       - name: Lint
-        run: npm run lint
+        run: bun run lint
 
       - name: Typecheck
-        run: npx tsc --noEmit
+        run: bunx tsc --noEmit
 
       - name: Test
-        run: npm test
+        run: bun run test
 
       - name: Build (static export to dist/)
-        run: npm run build
+        run: bun run build
