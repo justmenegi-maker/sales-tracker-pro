@@ -143,12 +143,19 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin() && isValidInviteId(inviteId) && isValidStaffInvite(incoming());
     }
 
+    // Branch names are readable by any signed-in staff member, deliberately not
+    // scoped to the caller's own branch. Firestore rules are not filters: a
+    // query has to be provably allowed for every document it could return, so
+    // the previous `branchId == myBranchId() || resource.data.managerEmail == …`
+    // condition denied the whole `collection('branches')` read for a branch
+    // login. That denial left the client with no branch at all, which is what
+    // stopped branch staff filing a daily report ("Could not file the report"),
+    // and it silently broke the sign-in lookup that links an invited manager by
+    // email. A branch document carries only a name, an active flag and the
+    // manager contact, so reading it is not sensitive. Writes stay admin-only,
+    // and reports/debts keep their own-branch scoping below.
     match /branches/{branchId} {
-      allow get, list: if isSignedIn() && (
-        isAdmin() ||
-        branchId == myBranchId() ||
-        (resource.data.managerEmail != null && resource.data.managerEmail == request.auth.token.email)
-      );
+      allow get, list: if isSignedIn();
       allow create, update: if isAdmin() && isValidId(branchId) && isValidBranch(incoming());
       allow delete: if isAdmin() && isValidId(branchId);
     }

@@ -57,10 +57,16 @@ A session is resolved in `src/lib/store.tsx` on every auth change:
   `managerEmail` matches) supplies that `branchId` on first sign-in.
 
 `firestore.rules` is the authorisation boundary, not the UI: a branch login can
-read and file only for its own branch, only an admin can change a report's review
-state or void it, a branch can add payments to its own debts but cannot edit the
-amount owed, and everything not matched is denied. `firebase.json` points the
-Firestore deploy at that file:
+read and file reports and debts only for its own branch, only an admin can change
+a report's review state or void it, a branch can add payments to its own debts
+but cannot edit the amount owed, and everything not matched is denied.
+
+Branch names are the one exception — any signed-in staff member may read them,
+plus the branch's manager contact. A query has to be provably allowed for every
+document it could return (rules are not filters), so scoping branch reads to the
+caller's own branch denied the whole `branches` read for a branch login and left
+the report form with no branch to file for. `firebase.json` points the Firestore
+deploy at that file:
 
 ```bash
 firebase deploy --only firestore:rules
