@@ -1,10 +1,11 @@
 /**
  * Domain model for the SK Tapri daily sales report.
  *
- * This mirrors the Supabase schema in `supabase/migrations`:
- *  - `daily_reports` keeps cash + online as columns and the rest as lines
- *  - `report_lines` holds finance / debt / exchange / cheque / store_use / others
- *  - `debts` + `debt_payments` drive the debt ledger
+ * This mirrors the Firestore shape enforced by `firestore.rules`:
+ *  - a `reports` document keeps cash + online as fields and the rest as lines
+ *  - every line carries its category (finance / debt / exchange / cheque /
+ *    store_use / others) instead of living in its own collection
+ *  - a `debts` document holds its payments inline, which drives the debt ledger
  *
  * The client can always recompute a total from a report, and does so through
  * `lib/totals.ts` so the arithmetic lives in exactly one place.
@@ -172,7 +173,7 @@ export function debtOutstandingPaise(debt: Debt): number {
   return Math.max(0, debt.amountPaise - debtPaidPaise(debt));
 }
 
-/** Mirrors the `sync_debt_status_from_payments` trigger in migration 003. */
+/** Derived from the payments, never stored, so ledger and reports cannot disagree. */
 export function deriveDebtStatus(debt: Debt): DebtStatus {
   const paid = debtPaidPaise(debt);
   if (paid >= debt.amountPaise) return "cleared";
