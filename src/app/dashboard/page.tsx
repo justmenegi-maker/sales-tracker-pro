@@ -6,6 +6,7 @@ import { DebtLedger } from "@/components/debt-ledger";
 import { ReportForm } from "@/components/report-form";
 import { ReportsTable } from "@/components/reports-table";
 import { RequireAuth } from "@/components/require-auth";
+import { SecurityPanel } from "@/components/security-panel";
 import { TrendChart } from "@/components/trend-chart";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatTile } from "@/components/ui/stat-tile";
@@ -138,6 +139,8 @@ function DashboardBody() {
           />
           <DebtLedger branchId={branchId} />
         </div>
+
+        <SecurityPanel />
       </div>
     </AppShell>
   );

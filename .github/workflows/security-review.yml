@@ -1,0 +1,36 @@
+name: Security review
+
+# Anthropic's Claude Code security review: it reads the pull-request diff and
+# posts findings as a review comment.
+#
+# One-time setup: add a repository secret named ANTHROPIC_API_KEY
+# (Settings → Secrets and variables → Actions → New repository secret). The key
+# must be enabled for both the Claude API and Claude Code.
+#
+# Anthropic warns that this action is not hardened against prompt injection, so
+# keep it to trusted pull requests and require approval for outside
+# contributors (Settings → Actions → General → Fork pull request workflows).
+
+permissions:
+  contents: read
+  pull-requests: write # needed to leave the review comment
+
+on:
+  pull_request:
+
+jobs:
+  security-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 2
+
+      # Pinned to the ref documented by Anthropic. Replace `@main` with a
+      # reviewed commit SHA if you want the workflow to be reproducible.
+      - uses: anthropics/claude-code-security-review@main
+        with:
+          comment-pr: true
+          claude-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          exclude-directories: "node_modules,dist,.next"

@@ -8,9 +8,11 @@ import { ArrowLeft, Store } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { GoogleIcon } from "@/components/ui/google-icon";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAppStore } from "@/lib/store";
+import { safeReturnPath, validateCredentialFields } from "@/lib/validation";
 
 // The app is exported statically, so this route has no server-side
 // searchParams: read the browser URL as an external store instead. The empty
@@ -21,8 +23,18 @@ const getServerUrlSnapshot = () => "";
 
 export default function LoginPage() {
   const router = useRouter();
-  const { ready, session, backend, signIn, signInDemo, error, clearError } =
-    useAppStore();
+  const {
+    ready,
+    session,
+    backend,
+    signIn,
+    signInWithGoogle,
+    signInDemo,
+    error,
+    clearError,
+    pendingVerificationEmail,
+    resendVerification,
+  } = useAppStore();
 
   const search = useSyncExternalStore(
     subscribeToUrl,
@@ -30,8 +42,8 @@ export default function LoginPage() {
     getServerUrlSnapshot,
   );
   const params = new URLSearchParams(search);
-  const requested = params.get("returnTo");
-  const returnTo = requested?.startsWith("/") ? requested : null;
+  // Only ever bounce back to a path inside this app (no absolute URLs).
+  const returnTo = safeReturnPath(params.get("returnTo"));
   const wantsAdmin = params.get("role") === "admin";
 
   const [email, setEmail] = useState("");
@@ -46,8 +58,14 @@ export default function LoginPage() {
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
+    // Check the shape of the input before anything touches the network.
+    const fields = validateCredentialFields(email, password);
+    if (!fields.ok) {
+      toast.error(fields.errors[0]);
+      return;
+    }
     setSubmitting(true);
-    const ok = await signIn(email.trim(), password);
+    const ok = await signIn(fields.value.email, fields.value.password);
     setSubmitting(false);
     if (ok) {
       const target = returnTo ?? fallback;
@@ -134,6 +152,35 @@ export default function LoginPage() {
                 </div>
               ) : null}
 
+              {backend === "supabase" ? (
+                <div className="space-y-4">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    disabled={submitting}
+                    onClick={async () => {
+                      const started = await signInWithGoogle(returnTo);
+                      if (started) toast.success("Taking you to Google…");
+                    }}
+                  >
+                    <GoogleIcon className="size-4" />
+                    Continue with Google
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    Google sign-in needs an admin to link your address to a
+                    branch first — the same rule as a password login.
+                  </p>
+                  <div className="relative flex items-center gap-3">
+                    <span className="h-px flex-1 bg-border" />
+                    <span className="text-xs uppercase tracking-wider text-muted-foreground">
+                      or
+                    </span>
+                    <span className="h-px flex-1 bg-border" />
+                  </div>
+                </div>
+              ) : null}
+
               <form className="space-y-4" onSubmit={handleSubmit}>
                 <div className="space-y-1">
                   <Label htmlFor="email">Email</Label>
@@ -142,6 +189,7 @@ export default function LoginPage() {
                     type="email"
                     autoComplete="email"
                     required
+                    maxLength={254}
                     value={email}
                     onChange={(event) => {
                       setEmail(event.target.value);
@@ -157,6 +205,7 @@ export default function LoginPage() {
                     type="password"
                     autoComplete="current-password"
                     required
+                    maxLength={256}
                     value={password}
                     onChange={(event) => {
                       setPassword(event.target.value);
@@ -167,9 +216,26 @@ export default function LoginPage() {
                 </div>
 
                 {error ? (
-                  <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                    {error}
-                  </p>
+                  <div className="space-y-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                    <p>{error}</p>
+                    {pendingVerificationEmail ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={async () => {
+                          const sent = await resendVerification();
+                          if (sent) {
+                            toast.success(
+                              "Confirmation email sent — check your inbox.",
+                            );
+                          }
+                        }}
+                      >
+                        Resend confirmation email
+                      </Button>
+                    ) : null}
+                  </div>
                 ) : null}
 
                 <Button type="submit" className="w-full" disabled={submitting}>
@@ -177,39 +243,44 @@ export default function LoginPage() {
                 </Button>
               </form>
 
-              <div className="relative flex items-center gap-3">
-                <span className="h-px flex-1 bg-border" />
-                <span className="text-xs uppercase tracking-wider text-muted-foreground">
-                  or
-                </span>
-                <span className="h-px flex-1 bg-border" />
-              </div>
+              {backend === "demo" ? (
+                <>
+                  <div className="relative flex items-center gap-3">
+                    <span className="h-px flex-1 bg-border" />
+                    <span className="text-xs uppercase tracking-wider text-muted-foreground">
+                      or
+                    </span>
+                    <span className="h-px flex-1 bg-border" />
+                  </div>
 
-              <div className="grid gap-2 sm:grid-cols-2">
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    signInDemo("branch");
-                    router.push("/dashboard");
-                  }}
-                >
-                  Demo · branch
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    signInDemo("admin");
-                    router.push("/admin");
-                  }}
-                >
-                  Demo · admin
-                </Button>
-              </div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        signInDemo("branch");
+                        router.push("/dashboard");
+                      }}
+                    >
+                      Demo · branch
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        signInDemo("admin");
+                        router.push("/admin");
+                      }}
+                    >
+                      Demo · admin
+                    </Button>
+                  </div>
 
-              <p className="text-xs text-muted-foreground">
-                Demo mode uses two sample branches and three weeks of seeded
-                reports, saved in this browser only.
-              </p>
+                  <p className="text-xs text-muted-foreground">
+                    Demo mode uses two sample branches and three weeks of seeded
+                    reports, saved in this browser only. Demo sign-in is switched
+                    off as soon as Supabase is connected.
+                  </p>
+                </>
+              ) : null}
             </CardContent>
           </Card>
 

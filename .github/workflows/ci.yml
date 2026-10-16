@@ -1,0 +1,48 @@
+name: CI
+
+# The same checks the README lists, run on every push and pull request, so a
+# broken report form cannot land on `main` unnoticed.
+#
+#   npm ci → lint → tsc --noEmit → vitest run → next build (static export)
+#
+# Install uses npm and the tracked `package-lock.json`; the build needs no
+# secrets — without the Supabase keys the app builds in demo mode.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Test
+        run: npm test
+
+      - name: Build (static export to dist/)
+        run: npm run build

@@ -21,8 +21,23 @@ import {
   type ReactNode,
 } from "react";
 import { createDemoWorkspace, DEMO_BRANCHES, DEMO_USERS } from "./demo-data";
+import { purgeLegacyAuthStorage } from "./auth-storage";
+import { todayISO } from "./format";
+import { logError, logWarn } from "./log";
+import { passwordIssues } from "./password";
+import { buildOAuthRedirect, primaryProvider, providerVerifiedEmail } from "./oauth";
+import { createRateLimiter, formatWait, safeErrorMessage } from "./security";
+import { accountStateReason, normalizeSession, type Session } from "./session";
 import { getSupabase, isSupabaseConfigured } from "./supabase";
-import { makeId } from "./report";
+import {
+  validateCredentialFields,
+  validateDebtPayment,
+  validateManualDebt,
+  validateReportInput,
+  validateReview,
+  validateVoidReason,
+} from "./validation";
+import { debtOutstandingPaise, makeId } from "./report";
 import type {
   Branch,
   DailyReport,
@@ -34,14 +49,6 @@ import type {
 import { computeTotalSale } from "./totals";
 
 type Backend = "supabase" | "demo";
-
-type Session = {
-  id: string;
-  email: string;
-  displayName: string;
-  role: "admin" | "branch";
-  branchId: string | null;
-};
 
 type ProfileRow = {
   id: string;
@@ -60,7 +67,19 @@ type StoreValue = {
   debts: Debt[];
   error: string | null;
   clearError: () => void;
+  /** Set when a sign-in was refused because the address is not confirmed. */
+  pendingVerificationEmail: string | null;
+  resendVerification: () => Promise<boolean>;
+  changePassword: (
+    currentPassword: string,
+    newPassword: string,
+  ) => Promise<boolean>;
+  signOutEverywhere: () => Promise<void>;
   signIn: (email: string, password: string) => Promise<boolean>;
+  /** Starts the Google redirect; the browser leaves this page on success. */
+  signInWithGoogle: (returnTo?: string | null) => Promise<boolean>;
+  /** Completes the redirect: exchanges the one-time PKCE code for a session. */
+  completeGoogleSignIn: (code: string) => Promise<boolean>;
   signInDemo: (role: "admin" | "branch") => void;
   signOut: () => Promise<void>;
   saveReport: (input: SaveReportInput) => Promise<boolean>;
@@ -85,6 +104,15 @@ type StoreValue = {
 
 const DEMO_SESSION_KEY = "sktapri.session.v1";
 const DEMO_WORKSPACE_KEY = "sktapri.workspace.v1";
+
+/**
+ * Client-side throttles. They exist so an honest user gets one clear message
+ * instead of a wall of failed requests; the limits that actually hold are the
+ * per-user write triggers in `supabase/migrations/006_security_hardening.sql`
+ * plus Supabase Auth's own sign-in rate limits.
+ */
+const signInLimiter = createRateLimiter({ limit: 5, windowMs: 5 * 60_000 });
+const writeLimiter = createRateLimiter({ limit: 30, windowMs: 60_000 });
 
 const StoreContext = createContext<StoreValue | null>(null);
 
@@ -162,6 +190,9 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [reports, setReports] = useState<DailyReport[]>([]);
   const [debts, setDebts] = useState<Debt[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [pendingVerificationEmail, setPendingVerificationEmail] = useState<
+    string | null
+  >(null);
   const mounted = useRef(true);
 
   useEffect(() => {
@@ -217,7 +248,11 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       const failure =
         branchResult.error ?? reportResult.error ?? debtResult.error ?? null;
       if (failure) {
-        if (mounted.current) setError(failure.message);
+        // Log the code, never the raw driver text: messages can echo values back.
+        logError("workspace load failed", { code: failure.code });
+        if (mounted.current) {
+          setError(safeErrorMessage(failure.message, "Could not load the workspace."));
+        }
         return;
       }
 
@@ -310,14 +345,36 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         .eq("id", user.id)
         .maybeSingle();
 
-      const next: Session = {
+      // An unverified address never becomes a session, even if a stale token
+      // is still lying around in the browser. An OAuth sign-in counts as
+      // verified, because the provider asserted the address.
+      if (!providerVerifiedEmail(user)) {
+        logWarn("session refused: email not confirmed");
+        await client.auth.signOut({ scope: "local" });
+        if (mounted.current) {
+          setPendingVerificationEmail(user.email ?? null);
+          setError("Confirm your email address before signing in.");
+          setReady(true);
+        }
+        return;
+      }
+
+      // `is_active` is part of the gate, not a decoration: both RLS helpers
+      // (`is_admin()`, `current_branch_id()`) ignore an inactive profile, so the
+      // workspace would be empty and every file would be refused.
+      const next = normalizeSession({
         id: user.id,
         email: user.email ?? "",
         displayName: profile?.display_name || user.email || "Signed in",
         role: profile?.role === "admin" ? "admin" : "branch",
         branchId: profile?.branch_id ?? null,
-      };
+        emailVerified: true,
+        hasProfile: Boolean(profile),
+        isActive: Boolean(profile?.is_active),
+        signInProvider: primaryProvider(user),
+      });
 
+      if (!next) return;
       if (!mounted.current) return;
       setSession(next);
       await loadSupabase(next, client);
@@ -331,8 +388,15 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
 
     async function boot() {
+      // Older builds persisted the session in localStorage; drop any copy left
+      // behind so the only place a token can live is this tab's sessionStorage.
+      purgeLegacyAuthStorage();
+
       if (backend === "demo") {
-        const stored = readJSON<Session>(DEMO_SESSION_KEY);
+        // Normalised: a session stored by an earlier build is missing the
+        // newer fields, and reading it raw would show "Account not linked yet"
+        // to a branch that was signed in a minute ago.
+        const stored = normalizeSession(readJSON(DEMO_SESSION_KEY));
         const workspace = readJSON<{ reports: DailyReport[]; debts: Debt[] }>(
           DEMO_WORKSPACE_KEY,
         );
@@ -341,7 +405,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         setBranches(seeded.branches);
         setReports(workspace?.reports?.length ? workspace.reports : seeded.reports);
         setDebts(workspace?.debts?.length ? workspace.debts : seeded.debts);
-        setSession(stored ?? null);
+        setSession(stored);
         setReady(true);
         return;
       }
@@ -376,62 +440,323 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const signIn = useCallback(
     async (email: string, password: string) => {
       setError(null);
+      setPendingVerificationEmail(null);
       if (!supabase) {
         setError(
           "Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY, or continue in demo mode.",
         );
         return false;
       }
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-      if (signInError) {
-        setError(signInError.message);
+
+      const fields = validateCredentialFields(email, password);
+      if (!fields.ok) {
+        setError(fields.errors[0]);
         return false;
       }
+
+      const account = fields.value.email.toLowerCase();
+      const decision = signInLimiter.check(account);
+      if (!decision.allowed) {
+        setError(
+          `Too many sign-in attempts. Try again in ${formatWait(decision.retryAfterMs)}.`,
+        );
+        return false;
+      }
+
+      const { data, error: signInError } = await supabase.auth.signInWithPassword({
+        email: fields.value.email,
+        password: fields.value.password,
+      });
+
+      if (signInError) {
+        const unverified =
+          signInError.code === "email_not_confirmed" ||
+          /not confirmed|confirm your email/i.test(signInError.message ?? "");
+        if (unverified) {
+          setPendingVerificationEmail(fields.value.email);
+          setError(
+            "Confirm your email address first — open the link we sent you, then sign in again.",
+          );
+        } else {
+          setError(safeErrorMessage(signInError, "Could not sign in."));
+        }
+        logWarn("sign-in rejected", { code: signInError.code });
+        return false;
+      }
+
+      // Belt and braces: a session without a verified address is thrown away.
+      const user = data.user ?? data.session?.user ?? null;
+      if (user && !providerVerifiedEmail(user)) {
+        await supabase.auth.signOut({ scope: "local" });
+        setPendingVerificationEmail(fields.value.email);
+        setError("Confirm your email address before signing in.");
+        return false;
+      }
+
+      signInLimiter.reset(account);
       await resolveSupabaseSession(supabase);
       return true;
     },
     [resolveSupabaseSession, supabase],
   );
 
-  const signInDemo = useCallback((role: "admin" | "branch") => {
-    const user = role === "admin" ? DEMO_USERS.admin : DEMO_USERS.branch;
-    const next: Session = {
-      id: `demo_${role}`,
-      email: user.email,
-      displayName: user.displayName,
-      role: user.role,
-      branchId: user.branchId,
-    };
-    writeJSON(DEMO_SESSION_KEY, next);
-    setSession(next);
-    setError(null);
-  }, []);
+  /**
+   * Hands the browser to Google via Supabase.
+   *
+   * `redirectTo` is built from this origin's `/auth/callback` route plus a safe
+   * internal return path, and it must be allow-listed in the Supabase dashboard
+   * (Authentication → URL Configuration). Nothing about the account is trusted
+   * here: the session only exists once the callback exchanges the code.
+   */
+  const signInWithGoogle = useCallback(
+    async (returnTo?: string | null) => {
+      setError(null);
+      setPendingVerificationEmail(null);
+      if (!supabase) {
+        setError("Connect Supabase before using Google sign-in.");
+        return false;
+      }
+      if (typeof window === "undefined") {
+        setError("Google sign-in needs a browser.");
+        return false;
+      }
+
+      const decision = signInLimiter.check("oauth:google");
+      if (!decision.allowed) {
+        setError(
+          `Too many sign-in attempts. Try again in ${formatWait(decision.retryAfterMs)}.`,
+        );
+        return false;
+      }
+
+      const redirectTo = buildOAuthRedirect(window.location.origin, returnTo);
+      if (!redirectTo) {
+        setError(
+          "This site's address is not a valid redirect target for Google sign-in.",
+        );
+        return false;
+      }
+
+      const { error: oauthError } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo },
+      });
+      if (oauthError) {
+        logError("google sign-in could not start", { code: oauthError.code });
+        setError(safeErrorMessage(oauthError, "Could not start Google sign-in."));
+        return false;
+      }
+      // The browser is navigating to Google now.
+      return true;
+    },
+    [supabase],
+  );
+
+  /** Exchanges the one-time PKCE code the callback route received. */
+  const completeGoogleSignIn = useCallback(
+    async (code: string) => {
+      setError(null);
+      if (!supabase) {
+        setError("Connect Supabase before using Google sign-in.");
+        return false;
+      }
+
+      const { data, error: exchangeError } =
+        await supabase.auth.exchangeCodeForSession(code);
+      if (exchangeError) {
+        logWarn("google code exchange rejected", { code: exchangeError.code });
+        setError(
+          safeErrorMessage(
+            exchangeError,
+            "That Google sign-in link has expired. Try again.",
+          ),
+        );
+        return false;
+      }
+
+      const user = data.user ?? data.session?.user ?? null;
+      if (!user || !providerVerifiedEmail(user)) {
+        await supabase.auth.signOut({ scope: "local" });
+        setError("That Google account has no verified email address.");
+        return false;
+      }
+
+      await resolveSupabaseSession(supabase);
+      return true;
+    },
+    [resolveSupabaseSession, supabase],
+  );
+
+  const resendVerification = useCallback(async () => {
+    if (!supabase || !pendingVerificationEmail) return false;
+    const { error: resendError } = await supabase.auth.resend({
+      type: "signup",
+      email: pendingVerificationEmail,
+    });
+    if (resendError) {
+      setError(safeErrorMessage(resendError, "Could not resend the confirmation email."));
+      return false;
+    }
+    return true;
+  }, [pendingVerificationEmail, supabase]);
+
+  const signInDemo = useCallback(
+    (role: "admin" | "branch") => {
+      // Demo sessions exist for exploring the app with no backend. Once
+      // Supabase is connected they would only fake a role the database would
+      // refuse anyway, so they are switched off.
+      if (backend === "supabase") {
+        setError("Demo mode is off while Supabase is connected — sign in instead.");
+        return;
+      }
+      const user = role === "admin" ? DEMO_USERS.admin : DEMO_USERS.branch;
+      const next = normalizeSession({
+        id: `demo_${role}`,
+        email: user.email,
+        displayName: user.displayName,
+        role: user.role,
+        branchId: user.branchId,
+        emailVerified: true,
+        hasProfile: true,
+        isActive: true,
+        signInProvider: "email",
+      });
+      if (!next) return;
+      writeJSON(DEMO_SESSION_KEY, next);
+      setSession(next);
+      setError(null);
+    },
+    [backend],
+  );
 
   const signOut = useCallback(async () => {
     if (supabase && session && !session.id.startsWith("demo_")) {
-      await supabase.auth.signOut();
+      await supabase.auth.signOut({ scope: "local" });
     }
+    purgeLegacyAuthStorage();
     if (typeof window !== "undefined") {
       window.localStorage.removeItem(DEMO_SESSION_KEY);
     }
     setSession(null);
   }, [session, supabase]);
 
+  /** Ends the session on every device the account is signed in on. */
+  const signOutEverywhere = useCallback(async () => {
+    if (supabase && session && !session.id.startsWith("demo_")) {
+      await supabase.auth.signOut({ scope: "global" });
+    }
+    purgeLegacyAuthStorage();
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(DEMO_SESSION_KEY);
+    }
+    setSession(null);
+    setReports([]);
+    setDebts([]);
+  }, [session, supabase]);
+
+  /** Re-authenticates with the current password, then sets a policy-clean new one. */
+  const changePassword = useCallback(
+    async (currentPassword: string, newPassword: string) => {
+      setError(null);
+      if (!supabase || !session) {
+        setError("Connect Supabase and sign in to change the password.");
+        return false;
+      }
+      if (typeof currentPassword !== "string" || currentPassword.length === 0) {
+        setError("Enter your current password.");
+        return false;
+      }
+      if (newPassword === currentPassword) {
+        setError("Choose a password you have not used here before.");
+        return false;
+      }
+
+      const issues = passwordIssues(newPassword, {
+        email: session.email,
+        displayName: session.displayName,
+      });
+      if (issues.length > 0) {
+        setError(issues[0]);
+        return false;
+      }
+
+      const decision = signInLimiter.check(`reauth:${session.id}`);
+      if (!decision.allowed) {
+        setError(
+          `Too many attempts. Try again in ${formatWait(decision.retryAfterMs)}.`,
+        );
+        return false;
+      }
+
+      const { error: reauthError } = await supabase.auth.signInWithPassword({
+        email: session.email,
+        password: currentPassword,
+      });
+      if (reauthError) {
+        setError("That current password is not right.");
+        return false;
+      }
+
+      const { error: updateError } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
+      if (updateError) {
+        setError(safeErrorMessage(updateError, "Could not change the password."));
+        return false;
+      }
+
+      // A password change should end sessions that were opened with the old one.
+      await supabase.auth.signOut({ scope: "others" });
+      return true;
+    },
+    [session, supabase],
+  );
+
   const saveReport = useCallback(
     async (input: SaveReportInput) => {
       setError(null);
+      if (!session) {
+        setError("Sign in before filing a report.");
+        return false;
+      }
+
+      // An unlinked, inactive or branch-less login cannot file anything, and the
+      // database would refuse it too — say which one it is.
+      const blocked = accountStateReason(session);
+      if (blocked) {
+        setError(blocked);
+        return false;
+      }
+
+      const validated = validateReportInput(input, todayISO());
+      if (!validated.ok) {
+        setError(validated.errors[0]);
+        return false;
+      }
+      const payload = validated.value;
+
+      // A branch may only file for its own branch (the RLS insert policy is the
+      // authority; this keeps the message friendly).
+      if (session.role !== "admin" && payload.branchId !== session.branchId) {
+        setError("You can only file reports for your own branch.");
+        return false;
+      }
+
+      const decision = writeLimiter.check(`report:${session.id}`);
+      if (!decision.allowed) {
+        setError(`Slow down — try again in ${formatWait(decision.retryAfterMs)}.`);
+        return false;
+      }
+
       const sections = {
-        cash: input.cashPaise,
-        online: input.onlinePaise,
-        finance: sumCategory(input.lines, "finance"),
-        debt: sumCategory(input.lines, "debt"),
-        exchange: sumCategory(input.lines, "exchange"),
-        cheque: sumCategory(input.lines, "cheque"),
-        store_use: sumCategory(input.lines, "store_use"),
-        others: sumCategory(input.lines, "others"),
+        cash: payload.cashPaise,
+        online: payload.onlinePaise,
+        finance: sumCategory(payload.lines, "finance"),
+        debt: sumCategory(payload.lines, "debt"),
+        exchange: sumCategory(payload.lines, "exchange"),
+        cheque: sumCategory(payload.lines, "cheque"),
+        store_use: sumCategory(payload.lines, "store_use"),
+        others: sumCategory(payload.lines, "others"),
       };
 
       let total: number;
@@ -442,7 +767,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         return false;
       }
 
-      const branch = branches.find((item) => item.id === input.branchId);
+      const branch = branches.find((item) => item.id === payload.branchId);
       if (!branch) {
         setError("Pick a branch before submitting.");
         return false;
@@ -453,12 +778,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           id: makeId("report"),
           branchId: branch.id,
           branchName: branch.name,
-          reportDate: input.reportDate,
+          reportDate: payload.reportDate,
           submittedBy: session?.id ?? "demo",
           submittedByName: session?.displayName ?? "Demo",
-          cashPaise: input.cashPaise,
-          onlinePaise: input.onlinePaise,
-          lines: input.lines.map((line) => ({ ...line, id: makeId("line") })),
+          cashPaise: payload.cashPaise,
+          onlinePaise: payload.onlinePaise,
+          lines: payload.lines.map((line) => ({ ...line, id: makeId("line") })),
           status: "active",
           voidReason: null,
           createdAt: new Date().toISOString(),
@@ -470,14 +795,14 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
         const nextReports = [report, ...reports];
         const nextDebts = [
-          ...input.lines
+          ...payload.lines
             .filter((line) => line.category === "debt")
             .map<Debt>((line) => ({
               id: makeId("debt"),
               branchId: branch.id,
               productName: line.label || "Debt item",
               amountPaise: line.amountPaise,
-              debtDate: input.reportDate,
+              debtDate: payload.reportDate,
               source: "report",
               voided: false,
               payments: [],
@@ -495,25 +820,26 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       const { error: reportError } = await supabase.from("daily_reports").insert({
         id: reportId,
         branch_id: branch.id,
-        report_date: input.reportDate,
+        report_date: payload.reportDate,
         submitted_by: session.id,
-        cash_paise: input.cashPaise,
-        online_paise: input.onlinePaise,
+        cash_paise: payload.cashPaise,
+        online_paise: payload.onlinePaise,
         total_paise: total,
-        finance_count: input.lines.filter((l) => l.category === "finance").length,
-        has_debt: input.lines.some((l) => l.category === "debt"),
+        finance_count: payload.lines.filter((l) => l.category === "finance").length,
+        has_debt: payload.lines.some((l) => l.category === "debt"),
         status: "active",
         review_status: "pending",
       });
 
       if (reportError) {
-        setError(reportError.message);
+        logError("report insert failed", { code: reportError.code });
+        setError(safeErrorMessage(reportError.message, "Could not file the report."));
         return false;
       }
 
-      if (input.lines.length > 0) {
+      if (payload.lines.length > 0) {
         const { error: linesError } = await supabase.from("report_lines").insert(
-          input.lines.map((line) => ({
+          payload.lines.map((line) => ({
             report_id: reportId,
             category: line.category,
             label: line.label,
@@ -521,12 +847,13 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           })),
         );
         if (linesError) {
-          setError(linesError.message);
+          logError("report lines insert failed", { code: linesError.code });
+          setError(safeErrorMessage(linesError.message, "Could not save the report rows."));
           return false;
         }
       }
 
-      const debtLines = input.lines.filter((line) => line.category === "debt");
+      const debtLines = payload.lines.filter((line) => line.category === "debt");
       if (debtLines.length > 0) {
         const { error: debtError } = await supabase.from("debts").insert(
           debtLines.map((line) => ({
@@ -535,11 +862,14 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
             source: "report",
             product_name: line.label,
             amount_paise: line.amountPaise,
-            debt_date: input.reportDate,
+            debt_date: payload.reportDate,
             created_by: session.id,
           })),
         );
-        if (debtError) setError(debtError.message);
+        if (debtError) {
+          logError("debt insert failed", { code: debtError.code });
+          setError(safeErrorMessage(debtError.message, "Could not save the debt rows."));
+        }
       }
 
       await loadSupabase(session, supabase);
@@ -551,10 +881,33 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const voidReport = useCallback(
     async (reportId: string, reason: string) => {
       setError(null);
-      if (backend === "demo" || !supabase || !session) {
+      if (!session) {
+        setError("Sign in before voiding a report.");
+        return false;
+      }
+      // Voiding is an admin action; the database enforces it too (policy +
+      // the append-only trigger in migration 006).
+      if (session.role !== "admin") {
+        setError("Only an admin can void a filed report.");
+        return false;
+      }
+      const validated = validateVoidReason(reason);
+      if (!validated.ok) {
+        setError(validated.errors[0]);
+        return false;
+      }
+      const cleanReason = validated.value.reason;
+
+      const decision = writeLimiter.check(`void:${session.id}`);
+      if (!decision.allowed) {
+        setError(`Slow down — try again in ${formatWait(decision.retryAfterMs)}.`);
+        return false;
+      }
+
+      if (backend === "demo" || !supabase) {
         const nextReports = reports.map((report) =>
           report.id === reportId
-            ? { ...report, status: "voided" as const, voidReason: reason }
+            ? { ...report, status: "voided" as const, voidReason: cleanReason }
             : report,
         );
         setReports(nextReports);
@@ -566,14 +919,15 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         .from("daily_reports")
         .update({
           status: "voided",
-          void_reason: reason,
+          void_reason: cleanReason,
           voided_by: session.id,
           voided_at: new Date().toISOString(),
         })
         .eq("id", reportId);
 
       if (voidError) {
-        setError(voidError.message);
+        logError("void failed", { code: voidError.code });
+        setError(safeErrorMessage(voidError.message, "Could not void the report."));
         return false;
       }
       await loadSupabase(session, supabase);
@@ -586,20 +940,35 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const setReportReview = useCallback(
     async (reportId: string, status: ReviewStatus, note: string) => {
       setError(null);
-      const trimmed = note.trim();
-
-      if (status === "concern" && trimmed.length < 3) {
-        setError("Add a short note explaining the concern.");
+      if (!session) {
+        setError("Sign in before reviewing a report.");
+        return false;
+      }
+      if (session.role !== "admin") {
+        setError("Only an admin can review a report.");
         return false;
       }
 
-      if (backend === "demo" || !supabase || !session) {
+      const validated = validateReview(status, note);
+      if (!validated.ok) {
+        setError(validated.errors[0]);
+        return false;
+      }
+      const cleanNote = validated.value.note;
+
+      const decision = writeLimiter.check(`review:${session.id}`);
+      if (!decision.allowed) {
+        setError(`Slow down — try again in ${formatWait(decision.retryAfterMs)}.`);
+        return false;
+      }
+
+      if (backend === "demo" || !supabase) {
         const nextReports = reports.map((report) =>
           report.id === reportId
             ? {
                 ...report,
                 reviewStatus: status,
-                reviewNote: status === "concern" ? trimmed : null,
+                reviewNote: status === "concern" ? cleanNote : null,
                 reviewedByName: session?.displayName ?? "Admin",
                 reviewedAt: new Date().toISOString(),
               }
@@ -614,14 +983,15 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         .from("daily_reports")
         .update({
           review_status: status,
-          review_note: status === "concern" ? trimmed : null,
+          review_note: status === "concern" ? cleanNote : null,
           reviewed_by: session.id,
           reviewed_at: new Date().toISOString(),
         })
         .eq("id", reportId);
 
       if (reviewError) {
-        setError(reviewError.message);
+        logError("review update failed", { code: reviewError.code });
+        setError(safeErrorMessage(reviewError.message, "Could not save the review."));
         return false;
       }
       await loadSupabase(session, supabase);
@@ -633,39 +1003,66 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const recordDebtPayment = useCallback(
     async (debtId: string, amountPaise: number, note: string) => {
       setError(null);
-      if (backend === "demo" || !supabase || !session) {
-        const nextDebts = debts.map((debt) =>
-          debt.id === debtId
+      if (!session) {
+        setError("Sign in before recording a payment.");
+        return false;
+      }
+
+      const debt = debts.find((item) => item.id === debtId);
+      if (!debt) {
+        setError("That debt is no longer in the ledger.");
+        return false;
+      }
+
+      const validated = validateDebtPayment({
+        amountPaise,
+        note,
+        outstandingPaise: debtOutstandingPaise(debt),
+      });
+      if (!validated.ok) {
+        setError(validated.errors[0]);
+        return false;
+      }
+      const payment = validated.value;
+
+      const decision = writeLimiter.check(`payment:${session.id}`);
+      if (!decision.allowed) {
+        setError(`Slow down — try again in ${formatWait(decision.retryAfterMs)}.`);
+        return false;
+      }
+
+      if (backend === "demo" || !supabase) {
+        const nextDebts = debts.map((entry) =>
+          entry.id === debtId
             ? {
-                ...debt,
+                ...entry,
                 payments: [
-                  ...debt.payments,
+                  ...entry.payments,
                   {
                     id: makeId("pay"),
-                    amountPaise,
-                    paidOn: new Date().toISOString().slice(0, 10),
-                    note: note || null,
+                    amountPaise: payment.amountPaise,
+                    paidOn: todayISO(),
+                    note: payment.note,
                   },
                 ],
               }
-            : debt,
+            : entry,
         );
         setDebts(nextDebts);
         persistDemo({ debts: nextDebts });
         return true;
       }
 
-      const { error: paymentError } = await supabase
-        .from("debt_payments")
-        .insert({
-          debt_id: debtId,
-          amount_paise: amountPaise,
-          note: note || null,
-          recorded_by: session.id,
-        });
+      const { error: paymentError } = await supabase.from("debt_payments").insert({
+        debt_id: debtId,
+        amount_paise: payment.amountPaise,
+        note: payment.note,
+        recorded_by: session.id,
+      });
 
       if (paymentError) {
-        setError(paymentError.message);
+        logError("payment insert failed", { code: paymentError.code });
+        setError(safeErrorMessage(paymentError.message, "Could not record the payment."));
         return false;
       }
       await loadSupabase(session, supabase);
@@ -682,14 +1079,43 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       debtDate: string;
     }) => {
       setError(null);
-      if (backend === "demo" || !supabase || !session) {
+      if (!session) {
+        setError("Sign in before adding a debt.");
+        return false;
+      }
+
+      const validated = validateManualDebt(input, todayISO());
+      if (!validated.ok) {
+        setError(validated.errors[0]);
+        return false;
+      }
+      const debtEntry = validated.value;
+
+      const blocked = accountStateReason(session);
+      if (blocked) {
+        setError(blocked);
+        return false;
+      }
+
+      if (session.role !== "admin" && debtEntry.branchId !== session.branchId) {
+        setError("You can only add debts for your own branch.");
+        return false;
+      }
+
+      const decision = writeLimiter.check(`debt:${session.id}`);
+      if (!decision.allowed) {
+        setError(`Slow down — try again in ${formatWait(decision.retryAfterMs)}.`);
+        return false;
+      }
+
+      if (backend === "demo" || !supabase) {
         const nextDebts: Debt[] = [
           {
             id: makeId("debt"),
-            branchId: input.branchId,
-            productName: input.productName,
-            amountPaise: input.amountPaise,
-            debtDate: input.debtDate,
+            branchId: debtEntry.branchId,
+            productName: debtEntry.productName,
+            amountPaise: debtEntry.amountPaise,
+            debtDate: debtEntry.debtDate,
             source: "manual",
             voided: false,
             payments: [],
@@ -702,16 +1128,17 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       }
 
       const { error: insertError } = await supabase.from("debts").insert({
-        branch_id: input.branchId,
-        product_name: input.productName,
-        amount_paise: input.amountPaise,
-        debt_date: input.debtDate,
+        branch_id: debtEntry.branchId,
+        product_name: debtEntry.productName,
+        amount_paise: debtEntry.amountPaise,
+        debt_date: debtEntry.debtDate,
         source: "manual",
         created_by: session.id,
       });
 
       if (insertError) {
-        setError(insertError.message);
+        logError("debt insert failed", { code: insertError.code });
+        setError(safeErrorMessage(insertError.message, "Could not add the debt."));
         return false;
       }
       await loadSupabase(session, supabase);
@@ -729,8 +1156,17 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       reports,
       debts,
       error,
-      clearError: () => setError(null),
+      clearError: () => {
+        setError(null);
+        setPendingVerificationEmail(null);
+      },
+      pendingVerificationEmail,
+      resendVerification,
+      changePassword,
+      signOutEverywhere,
       signIn,
+      signInWithGoogle,
+      completeGoogleSignIn,
       signInDemo,
       signOut,
       saveReport,
@@ -743,17 +1179,23 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       addManualDebt,
       backend,
       branches,
+      changePassword,
+      completeGoogleSignIn,
       debts,
       error,
+      pendingVerificationEmail,
       ready,
       recordDebtPayment,
       reports,
+      resendVerification,
       saveReport,
       session,
       setReportReview,
       signIn,
+      signInWithGoogle,
       signInDemo,
       signOut,
+      signOutEverywhere,
       voidReport,
     ],
   );

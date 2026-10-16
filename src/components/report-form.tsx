@@ -19,6 +19,7 @@ import {
 import type { DailyReport, LineCategory, SaveReportInput } from "@/lib/report";
 import { computeTotalSale } from "@/lib/totals";
 import { useAppStore } from "@/lib/store";
+import { validateReportInput } from "@/lib/validation";
 
 type LineDraft = {
   key: string;
@@ -37,16 +38,19 @@ function initialLines(): LineDraft[] {
 
 export function ReportForm() {
   const { session, branches, reports, saveReport } = useAppStore();
+  const isBranchUser = session?.role === "branch";
+
   const [reportDate, setReportDate] = useState(todayISO());
+  // A branch login files for its own branch and nothing else, so it must never
+  // fall back to whichever branch happens to sort first — that default used to
+  // produce a form that could only be refused on submit.
   const [branchId, setBranchId] = useState(
-    session?.branchId ?? branches[0]?.id ?? "",
+    isBranchUser ? (session?.branchId ?? "") : (branches[0]?.id ?? ""),
   );
   const [cashPaise, setCashPaise] = useState(0);
   const [onlinePaise, setOnlinePaise] = useState(0);
   const [lines, setLines] = useState<LineDraft[]>(initialLines);
   const [saving, setSaving] = useState(false);
-
-  const isBranchUser = session?.role === "branch";
 
   const sections = useMemo(() => {
     const base = {
@@ -119,8 +123,15 @@ export function ReportForm() {
         })),
     };
 
+    // The same rules the store and the database constraints apply.
+    const validated = validateReportInput(payload, todayISO());
+    if (!validated.ok) {
+      toast.error(validated.errors[0]);
+      return;
+    }
+
     setSaving(true);
-    const ok = await saveReport(payload);
+    const ok = await saveReport(validated.value);
     setSaving(false);
 
     if (ok) {
@@ -128,9 +139,8 @@ export function ReportForm() {
         `Report filed for ${formatDateLabel(reportDate)} — ${formatINR(total)}`,
       );
       reset();
-    } else {
-      toast.error("Could not file the report. Check the amounts and try again.");
     }
+    // A refusal explains itself: the store raises it and AppShell toasts it.
   }
 
   return (

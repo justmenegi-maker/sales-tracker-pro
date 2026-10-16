@@ -10,10 +10,15 @@ build/
 dist/
 next-env.d.ts
 
-# Environment
+# Environment — real values stay out of git. Only documented examples are kept.
 .env
-.env*.local
-!env.local.example
+.env.*
+.env.keys
+*.env
+*.env.*
+!*.env.example
+supabase/.env
+supabase/.env.*
 supabase/env.local
 
 # Testing

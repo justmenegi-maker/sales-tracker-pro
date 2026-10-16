@@ -73,9 +73,8 @@ export function DebtLedger({ branchId }: { branchId?: string | null }) {
       toast.success(`Payment of ${formatINR(paymentPaise)} recorded.`);
       setOpenPaymentFor(null);
       setPaymentPaise(0);
-    } else {
-      toast.error("Could not record the payment.");
     }
+    // A refusal explains itself: the store raises it and AppShell toasts it.
   }
 
   async function submitManualDebt() {
@@ -103,8 +102,6 @@ export function DebtLedger({ branchId }: { branchId?: string | null }) {
       toast.success("Debt added to the ledger.");
       setProductName("");
       setAmountPaise(0);
-    } else {
-      toast.error("Could not add the debt.");
     }
   }
 

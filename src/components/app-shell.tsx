@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useEffect } from "react";
+import { toast } from "sonner";
 import { LogOut, Store, LayoutDashboard, ReceiptText } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,7 +26,15 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { session, backend, signOut } = useAppStore();
+  const { session, backend, signOut, error, clearError } = useAppStore();
+
+  // Every failure message is raised once, here, instead of being repeated by
+  // each caller that triggered the write.
+  useEffect(() => {
+    if (!error) return;
+    toast.error(error);
+    clearError();
+  }, [clearError, error]);
 
   return (
     <div className="min-h-screen">
