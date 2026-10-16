@@ -57,23 +57,23 @@ export function ReportsTable({
       return;
     }
     setSaving(true);
-    const ok = await voidReport(reportId, reason.trim());
+    const result = await voidReport(reportId, reason.trim());
     setSaving(false);
-    if (ok) {
+    if (result.ok) {
       toast.success("Report voided.");
       setVoidingFor(null);
       setReason("");
     } else {
-      toast.error("Could not void the report.");
+      toast.error(result.error ?? "Could not void the report.");
     }
   }
 
   async function tickOk(summary: ReportSummary) {
-    const ok = await setReportReview(summary.report.id, "ok", "");
-    if (ok) {
+    const result = await setReportReview(summary.report.id, "ok", "");
+    if (result.ok) {
       toast.success(`Ticked OK for ${formatDateLabel(summary.report.reportDate)}.`);
     } else {
-      toast.error("Could not save the review.");
+      toast.error(result.error ?? "Could not save the review.");
     }
   }
 

@@ -231,6 +231,57 @@ export function resolveFilingBranch(input: {
   return null;
 }
 
+/** Document id for a branch, derived from its name. */
+export function branchIdFromName(name: string): string {
+  return (
+    name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "") || makeId("branch")
+  );
+}
+
+/**
+ * The Firestore document written when an admin adds a branch.
+ *
+ * `firestore.rules` validates a string whenever an optional key is present, so
+ * the manager fields are *omitted* when they are blank instead of written as
+ * null: `managerEmail: null` made every create from the admin portal fail, with
+ * no branch and no explanation. The email is lower-cased because that is the
+ * value both the rules and the manager lookup compare against.
+ */
+export function buildBranchDocument(input: {
+  name: string;
+  managerEmail?: string | null;
+  managerName?: string | null;
+  createdAt: string;
+}): {
+  id: string;
+  data: {
+    name: string;
+    isActive: true;
+    createdAt: string;
+    managerEmail?: string;
+    managerName?: string;
+  };
+} {
+  const name = input.name.trim();
+  const managerEmail = (input.managerEmail ?? "").trim().toLowerCase();
+  const managerName = (input.managerName ?? "").trim();
+
+  return {
+    id: branchIdFromName(name),
+    data: {
+      name,
+      isActive: true,
+      createdAt: input.createdAt,
+      ...(managerEmail ? { managerEmail } : {}),
+      ...(managerName ? { managerName } : {}),
+    },
+  };
+}
+
 export const REVIEW_META: Array<{
   key: ReviewStatus;
   label: string;

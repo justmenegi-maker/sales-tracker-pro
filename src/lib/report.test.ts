@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
+  branchIdFromName,
+  buildBranchDocument,
   debtOutstandingPaise,
   debtPaidPaise,
   deriveDebtStatus,
@@ -208,6 +210,73 @@ describe("debt derivation", () => {
     });
     expect(debtOutstandingPaise(overpaid)).toBe(0);
     expect(deriveDebtStatus(overpaid)).toBe("cleared");
+  });
+});
+
+describe("buildBranchDocument", () => {
+  const createdAt = "2026-10-16T06:00:00.000Z";
+
+  it("omits the optional manager keys when they are blank", () => {
+    // The reported bug: the form sent `managerEmail: null` / `managerName: null`,
+    // the rules require a string whenever the key is present, and the create was
+    // refused — "could not create branch" with no branch and no reason.
+    const doc = buildBranchDocument({ name: "SK Tapri South Ex", createdAt });
+    expect(Object.keys(doc.data).sort()).toEqual([
+      "createdAt",
+      "isActive",
+      "name",
+    ]);
+  });
+
+  it("never writes a null value for a manager field", () => {
+    const doc = buildBranchDocument({
+      name: "SK Tapri South Ex",
+      managerEmail: "   ",
+      managerName: null,
+      createdAt,
+    });
+    expect(Object.values(doc.data)).not.toContain(null);
+  });
+
+  it("keeps the manager contact the rules compare against", () => {
+    const doc = buildBranchDocument({
+      name: "SK Tapri South Ex",
+      managerEmail: "  Manager.SouthEx@Gmail.com ",
+      managerName: "  Rahul Sharma  ",
+      createdAt,
+    });
+    expect(doc.data.managerEmail).toBe("manager.southex@gmail.com");
+    expect(doc.data.managerName).toBe("Rahul Sharma");
+    expect(doc.data.name).toBe("SK Tapri South Ex");
+    expect(doc.data.isActive).toBe(true);
+  });
+
+  it("takes a manager name without an email", () => {
+    const doc = buildBranchDocument({
+      name: "SK Tapri South Ex",
+      managerName: "Rahul Sharma",
+      createdAt,
+    });
+    expect(doc.data.managerName).toBe("Rahul Sharma");
+    expect("managerEmail" in doc.data).toBe(false);
+  });
+});
+
+describe("branchIdFromName", () => {
+  it("slugifies a branch name into a document id", () => {
+    expect(branchIdFromName("SK Tapri South Ex")).toBe("sk-tapri-south-ex");
+    expect(branchIdFromName("  Kaza / Highway  ")).toBe("kaza-highway");
+  });
+
+  it("falls back to a generated id when nothing usable is left", () => {
+    expect(branchIdFromName("!!!")).toMatch(/^branch_[a-z0-9]+_[a-z0-9]+$/);
+  });
+
+  it("produces an id the security rules accept", () => {
+    // firestore.rules -> isValidId(): 1-128 chars of [a-zA-Z0-9_-]
+    for (const name of ["SK Tapri South Ex", "Kaza / Highway", "!!!"]) {
+      expect(branchIdFromName(name)).toMatch(/^[a-zA-Z0-9_-]{1,128}$/);
+    }
   });
 });
 

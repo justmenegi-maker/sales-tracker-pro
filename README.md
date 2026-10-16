@@ -72,6 +72,24 @@ deploy at that file:
 firebase deploy --only firestore:rules
 ```
 
+## Adding a branch or a staff member
+
+Both happen in `/admin` → *Branches & Staff Management*. A branch document holds
+only a name, an active flag and the optional manager contact, and the rules
+validate a *string* whenever an optional key is present — so `buildBranchDocument`
+in `src/lib/report.ts` **omits** a blank manager field rather than writing `null`.
+Sending `managerEmail: null` was refused outright, which is what made every
+"Add Branch" press fail with nothing to show for it. The document id is the
+slugified name, and a manager email is stored lower-cased because that is the
+value both the rules and the manager lookup compare against.
+
+An invitation addressed to an email is what links that account to a branch on
+first sign-in, and an invitation with role `admin` grants admin rights (an invite
+document can only be written by an admin, so this is an admin vouching for the
+account). The invited account then records its own `admins/{uid}` grant, which an
+admin can delete to revoke it. The invitee's first sign-in also flips their own
+invitation to `active`, so the portal's Invited/Active badge tells the truth.
+
 ## Environment
 
 | Key | Required | Notes |

@@ -102,7 +102,11 @@ export function firestoreErrorMessage(
 
   const code = (error as { code?: string } | null | undefined)?.code ?? "";
   if (code === "permission-denied") {
-    return `Firestore refused to ${action}. Your account may not be linked to a branch yet, so ask an admin to check your branch assignment.`;
+    // Two audiences read this: branch staff, whose account may not be linked to a
+    // branch yet, and admins, for whom the deployed security rules are usually
+    // the older copy. Naming both beats a message that sends an admin looking for
+    // a branch assignment they already have.
+    return `Firestore refused to ${action}. If you are branch staff, your account may not be linked to a branch yet — ask an admin. If you are an admin, the deployed security rules may be out of date.`;
   }
   if (code === "unavailable" || code === "deadline-exceeded") {
     return `Could not reach Firestore to ${action}. Check the connection and try again.`;

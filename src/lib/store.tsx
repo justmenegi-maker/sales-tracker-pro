@@ -40,14 +40,13 @@ import {
   db,
   firestoreErrorMessage,
   googleProvider,
-  handleFirestoreError,
   OperationType,
   signInWithPopup,
   fbSignOut,
   onAuthStateChanged,
   type User,
 } from "./firebase";
-import { makeId, resolveFilingBranch } from "./report";
+import { buildBranchDocument, makeId, resolveFilingBranch } from "./report";
 import type {
   Branch,
   DailyReport,
@@ -79,6 +78,18 @@ export type FileReportResult = {
   error: string | null;
 };
 
+/**
+ * Outcome of an admin/maintenance action.
+ *
+ * Every awaited write returns its reason instead of throwing: a throw out of a
+ * click handler leaves the button stuck on "…" with no message at all, which is
+ * how "I cannot add branches" arrived with no cause attached.
+ */
+export type ActionResult = {
+  ok: boolean;
+  error: string | null;
+};
+
 type StoreValue = {
   ready: boolean;
   backend: "firebase";
@@ -93,36 +104,36 @@ type StoreValue = {
   signInWithGoogle: () => Promise<boolean>;
   signOut: () => Promise<void>;
   saveReport: (input: SaveReportInput) => Promise<FileReportResult>;
-  voidReport: (reportId: string, reason: string) => Promise<boolean>;
+  voidReport: (reportId: string, reason: string) => Promise<ActionResult>;
   setReportReview: (
     reportId: string,
     status: ReviewStatus,
     note: string,
-  ) => Promise<boolean>;
+  ) => Promise<ActionResult>;
   recordDebtPayment: (
     debtId: string,
     amountPaise: number,
     note: string,
-  ) => Promise<boolean>;
+  ) => Promise<ActionResult>;
   addManualDebt: (input: {
     branchId: string;
     productName: string;
     amountPaise: number;
     debtDate: string;
-  }) => Promise<boolean>;
+  }) => Promise<ActionResult>;
   addBranch: (
     name: string,
     managerEmail?: string,
     managerName?: string,
-  ) => Promise<boolean>;
-  deleteBranch: (branchId: string) => Promise<boolean>;
+  ) => Promise<ActionResult>;
+  deleteBranch: (branchId: string) => Promise<ActionResult>;
   inviteStaff: (input: {
     email: string;
     displayName: string;
     branchId: string;
     role?: "branch" | "admin";
-  }) => Promise<boolean>;
-  deleteInvite: (inviteId: string) => Promise<boolean>;
+  }) => Promise<ActionResult>;
+  deleteInvite: (inviteId: string) => Promise<ActionResult>;
 };
 
 const BOOTSTRAP_ADMIN_EMAIL = "justmenegi@gmail.com";
@@ -189,14 +200,16 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         profileRole = isAdmin ? "admin" : (udata.role as "admin" | "branch") || "branch";
         branchId = udata.branchId || null;
       } else {
-        const newProfile = {
+        // Optional keys are omitted rather than written as null: the security
+        // rules require a string whenever the key is present, so a `branchId:
+        // null` profile was refused outright and a new account ended up with no
+        // profile document at all (which then broke the invitation link-up).
+        await setDoc(userDocRef, {
           email: user.email || "",
           displayName: user.displayName || user.email?.split("@")[0] || "User",
           role: profileRole,
-          branchId: null,
           createdAt: new Date().toISOString(),
-        };
-        await setDoc(userDocRef, newProfile);
+        });
       }
     } catch (err) {
       console.warn("Could not read/write user profile:", err);
@@ -316,7 +329,9 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           setBranches(snapshot.docs.map(toBranch));
         },
         (error) => {
-          handleFirestoreError(error, OperationType.LIST, "branches");
+          setError(
+            firestoreErrorMessage(error, OperationType.LIST, "branches", "load the branch list"),
+          );
         },
       );
     } else if (session.branchId) {
@@ -327,7 +342,9 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           setBranches(snapshot.exists() ? [toBranch(snapshot)] : []);
         },
         (error) => {
-          handleFirestoreError(error, OperationType.GET, `branches/${session.branchId}`);
+          setError(
+            firestoreErrorMessage(error, OperationType.GET, `branches/${session.branchId}`, "load your branch"),
+          );
         },
       );
     }
@@ -370,7 +387,9 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           setReports(list);
         },
         (error) => {
-          handleFirestoreError(error, OperationType.LIST, "reports");
+          setError(
+            firestoreErrorMessage(error, OperationType.LIST, "reports", "load the reports"),
+          );
         },
       );
     }
@@ -405,7 +424,9 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           setDebts(list);
         },
         (error) => {
-          handleFirestoreError(error, OperationType.LIST, "debts");
+          setError(
+            firestoreErrorMessage(error, OperationType.LIST, "debts", "load the debt ledger"),
+          );
         },
       );
     }
@@ -642,11 +663,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   );
 
   const voidReport = useCallback(
-    async (reportId: string, reason: string) => {
+    async (reportId: string, reason: string): Promise<ActionResult> => {
       setError(null);
       if (session?.role !== "admin") {
-        setError("Only admins can void a filed report.");
-        return false;
+        const message = "Only admins can void a filed report.";
+        setError(message);
+        return { ok: false, error: message };
       }
 
       try {
@@ -654,26 +676,39 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           status: "voided",
           voidReason: reason,
         });
-        return true;
+        return { ok: true, error: null };
       } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, `reports/${reportId}`);
+        const message = firestoreErrorMessage(
+          err,
+          OperationType.UPDATE,
+          `reports/${reportId}`,
+          "void this report",
+        );
+        setError(message);
+        return { ok: false, error: message };
       }
     },
     [session],
   );
 
   const setReportReview = useCallback(
-    async (reportId: string, status: ReviewStatus, note: string) => {
+    async (
+      reportId: string,
+      status: ReviewStatus,
+      note: string,
+    ): Promise<ActionResult> => {
       setError(null);
       if (session?.role !== "admin") {
-        setError("Only admins can review reports.");
-        return false;
+        const message = "Only admins can review reports.";
+        setError(message);
+        return { ok: false, error: message };
       }
 
       const trimmed = note.trim();
       if (status === "concern" && trimmed.length < 3) {
-        setError("Add a short note explaining the concern.");
-        return false;
+        const message = "Add a short note explaining the concern.";
+        setError(message);
+        return { ok: false, error: message };
       }
 
       try {
@@ -683,16 +718,27 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           reviewedByName: session.displayName || "Admin",
           reviewedAt: new Date().toISOString(),
         });
-        return true;
+        return { ok: true, error: null };
       } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, `reports/${reportId}`);
+        const message = firestoreErrorMessage(
+          err,
+          OperationType.UPDATE,
+          `reports/${reportId}`,
+          "save this review",
+        );
+        setError(message);
+        return { ok: false, error: message };
       }
     },
     [session],
   );
 
   const recordDebtPayment = useCallback(
-    async (debtId: string, amountPaise: number, note: string) => {
+    async (
+      debtId: string,
+      amountPaise: number,
+      note: string,
+    ): Promise<ActionResult> => {
       setError(null);
       const currentDebt = debts.find((d) => d.id === debtId);
       const paymentItem = {
@@ -710,9 +756,16 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         await updateDoc(doc(db, "debts", debtId), {
           payments: updatedPayments,
         });
-        return true;
+        return { ok: true, error: null };
       } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, `debts/${debtId}`);
+        const message = firestoreErrorMessage(
+          err,
+          OperationType.UPDATE,
+          `debts/${debtId}`,
+          "record this payment",
+        );
+        setError(message);
+        return { ok: false, error: message };
       }
     },
     [debts],
@@ -724,12 +777,13 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       productName: string;
       amountPaise: number;
       debtDate: string;
-    }) => {
+    }): Promise<ActionResult> => {
       setError(null);
       // Branch Manager cannot add debt for another branch
       if (session?.role === "branch" && session.branchId && input.branchId !== session.branchId) {
-        setError("You can only record debts for your assigned branch.");
-        return false;
+        const message = "You can only record debts for your assigned branch.";
+        setError(message);
+        return { ok: false, error: message };
       }
 
       const debtId = makeId("debt");
@@ -744,71 +798,112 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           payments: [],
           createdAt: new Date().toISOString(),
         });
-        return true;
+        return { ok: true, error: null };
       } catch (err) {
-        handleFirestoreError(err, OperationType.CREATE, `debts/${debtId}`);
+        const message = firestoreErrorMessage(
+          err,
+          OperationType.CREATE,
+          `debts/${debtId}`,
+          "add this debt",
+        );
+        setError(message);
+        return { ok: false, error: message };
       }
     },
     [session],
   );
 
   const addBranch = useCallback(
-    async (name: string, managerEmail?: string, managerName?: string) => {
+    async (
+      name: string,
+      managerEmail?: string,
+      managerName?: string,
+    ): Promise<ActionResult> => {
       setError(null);
       if (session?.role !== "admin") {
-        setError("Only admins can create branches.");
-        return false;
+        const message =
+          "Only admins can create branches. Sign in with an admin account and try again.";
+        setError(message);
+        return { ok: false, error: message };
       }
 
-      const branchId = name
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-|-$/g, "") || makeId("branch");
-
-      const payload = {
-        name: name.trim(),
-        isActive: true,
-        managerEmail: managerEmail?.trim() || null,
-        managerName: managerName?.trim() || null,
+      // Lower-cased so the branch's `managerEmail` matches the lookup that links
+      // a signed-in manager to their branch (`where("managerEmail", "==", email)`).
+      const cleanEmail = (managerEmail || "").trim().toLowerCase();
+      const cleanManagerName = (managerName || "").trim();
+      const { id: branchId, data: payload } = buildBranchDocument({
+        name,
+        managerEmail: cleanEmail,
+        managerName: cleanManagerName,
         createdAt: new Date().toISOString(),
-      };
+      });
 
       try {
         await setDoc(doc(db, "branches", branchId), payload);
-        if (managerEmail && managerEmail.trim()) {
-          const inviteDocId = managerEmail.trim().toLowerCase();
-          await setDoc(doc(db, "invites", inviteDocId), {
-            email: managerEmail.trim().toLowerCase(),
-            displayName: managerName?.trim() || managerEmail.split("@")[0],
+      } catch (err) {
+        const message = firestoreErrorMessage(
+          err,
+          OperationType.CREATE,
+          `branches/${branchId}`,
+          "create this branch",
+        );
+        setError(message);
+        return { ok: false, error: message };
+      }
+
+      // The branch exists from here on, so a manager invitation that does not go
+      // through is a caveat on a created branch, not a failed creation — the same
+      // shape as a debt row that never reached the ledger.
+      if (cleanEmail) {
+        try {
+          await setDoc(doc(db, "invites", cleanEmail), {
+            email: cleanEmail,
+            displayName: cleanManagerName || cleanEmail.split("@")[0],
             branchId,
-            branchName: name.trim(),
+            branchName: payload.name,
             role: "branch" as const,
             invitedBy: session.email,
             status: "invited" as const,
             createdAt: new Date().toISOString(),
           });
+        } catch (err) {
+          const message = `The branch was created, but ${firestoreErrorMessage(
+            err,
+            OperationType.CREATE,
+            `invites/${cleanEmail}`,
+            "invite the manager",
+          )}`;
+          setError(message);
+          return { ok: true, error: message };
         }
-        return true;
-      } catch (err) {
-        handleFirestoreError(err, OperationType.CREATE, `branches/${branchId}`);
       }
+
+      return { ok: true, error: null };
     },
     [session],
   );
 
   const deleteBranch = useCallback(
-    async (branchId: string) => {
+    async (branchId: string): Promise<ActionResult> => {
       setError(null);
       if (session?.role !== "admin") {
-        setError("Only admins can delete branches.");
-        return false;
+        const message = "Only admins can delete branches.";
+        setError(message);
+        return { ok: false, error: message };
       }
 
       try {
         await deleteDoc(doc(db, "branches", branchId));
-        return true;
+        return { ok: true, error: null };
       } catch (err) {
-        handleFirestoreError(err, OperationType.DELETE, `branches/${branchId}`);
+        const message = firestoreErrorMessage(
+          err,
+          OperationType.DELETE,
+          `branches/${branchId}`,
+          "delete this branch",
+        );
+        setError(message);
+        return { ok: false, error: message };
       }
     },
     [session],
@@ -820,11 +915,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       displayName: string;
       branchId: string;
       role?: "branch" | "admin";
-    }) => {
+    }): Promise<ActionResult> => {
       setError(null);
       if (session?.role !== "admin") {
-        setError("Only admins can invite staff.");
-        return false;
+        const message = "Only admins can invite staff.";
+        setError(message);
+        return { ok: false, error: message };
       }
 
       const cleanEmail = input.email.trim().toLowerCase();
@@ -844,27 +940,42 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
       try {
         await setDoc(doc(db, "invites", inviteId), payload);
-        return true;
+        return { ok: true, error: null };
       } catch (err) {
-        handleFirestoreError(err, OperationType.CREATE, `invites/${inviteId}`);
+        const message = firestoreErrorMessage(
+          err,
+          OperationType.CREATE,
+          `invites/${inviteId}`,
+          "send this invitation",
+        );
+        setError(message);
+        return { ok: false, error: message };
       }
     },
     [branches, session],
   );
 
   const deleteInvite = useCallback(
-    async (inviteId: string) => {
+    async (inviteId: string): Promise<ActionResult> => {
       setError(null);
       if (session?.role !== "admin") {
-        setError("Only admins can delete invites.");
-        return false;
+        const message = "Only admins can delete invites.";
+        setError(message);
+        return { ok: false, error: message };
       }
 
       try {
         await deleteDoc(doc(db, "invites", inviteId));
-        return true;
+        return { ok: true, error: null };
       } catch (err) {
-        handleFirestoreError(err, OperationType.DELETE, `invites/${inviteId}`);
+        const message = firestoreErrorMessage(
+          err,
+          OperationType.DELETE,
+          `invites/${inviteId}`,
+          "remove this invitation",
+        );
+        setError(message);
+        return { ok: false, error: message };
       }
     },
     [session],

@@ -26,10 +26,24 @@ service cloud.firestore {
       return resource.data;
     }
 
+    // An admin invitation is an admin vouching for an account: `invites/{email}`
+    // can only be written by an admin (see the `invites` match below), so an
+    // invite with role 'admin' grants the same rights as an `admins/{uid}`
+    // document. Without this an account invited as "System Admin" reached the
+    // admin portal (the client trusts the invite's role) while every admin write
+    // was refused, which is one of the ways branch management failed.
+    function hasAdminInvite() {
+      return isSignedIn() &&
+        request.auth.token.email != null &&
+        exists(/databases/$(database)/documents/invites/$(request.auth.token.email)) &&
+        get(/databases/$(database)/documents/invites/$(request.auth.token.email)).data.role == 'admin';
+    }
+
     function isAdmin() {
       return isSignedIn() && (
         exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
-        (request.auth.token.email == 'justmenegi@gmail.com')
+        (request.auth.token.email == 'justmenegi@gmail.com') ||
+        hasAdminInvite()
       );
     }
 
@@ -56,19 +70,24 @@ service cloud.firestore {
              data.email is string && data.email.size() <= 256 &&
              data.displayName is string && data.displayName.size() <= 100 &&
              data.role in ['admin', 'branch'] &&
-             (!('branchId' in data) || (data.branchId is string && data.branchId.size() <= 64)) &&
+             // An unassigned profile stores no branchId, or a null one.
+             (!('branchId' in data) || data.branchId == null || (data.branchId is string && data.branchId.size() <= 64)) &&
              (!('assignedBranches' in data) || (data.assignedBranches is list && data.assignedBranches.size() <= 20)) &&
              data.createdAt is string && data.createdAt.size() <= 64;
     }
 
+    // The manager contact is optional, so those keys may be missing *or* null.
+    // Requiring a string whenever the key was present is what refused every
+    // branch created from the admin portal: the form sent `managerEmail: null`
+    // when the field was left empty, and the whole create was denied.
     function isValidBranch(data) {
       return data.keys().hasAll(['name', 'isActive']) &&
              data.keys().hasOnly(['name', 'isActive', 'managerEmail', 'managerName', 'createdAt']) &&
              data.name is string && data.name.size() > 0 && data.name.size() <= 128 &&
              data.isActive is bool &&
-             (!('managerEmail' in data) || (data.managerEmail is string && data.managerEmail.size() <= 256)) &&
-             (!('managerName' in data) || (data.managerName is string && data.managerName.size() <= 100)) &&
-             (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 64));
+             (!('managerEmail' in data) || data.managerEmail == null || (data.managerEmail is string && data.managerEmail.size() <= 256)) &&
+             (!('managerName' in data) || data.managerName == null || (data.managerName is string && data.managerName.size() <= 100)) &&
+             (!('createdAt' in data) || data.createdAt == null || (data.createdAt is string && data.createdAt.size() <= 64));
     }
 
     function isValidStaffInvite(data) {
@@ -123,13 +142,21 @@ service cloud.firestore {
     match /users/{userId} {
       allow get: if isSignedIn() && isValidId(userId) && (request.auth.uid == userId || isAdmin());
       allow list: if isAdmin();
-      allow create: if isSignedIn() && isValidId(userId) && request.auth.uid == userId && isValidUserProfile(incoming());
+      // A profile cannot claim a role the account is not entitled to: 'admin'
+      // only for an admin, 'branch' otherwise. Without this check anyone who
+      // signed in could self-register `role: 'admin'` and be shown the admin
+      // portal by the client.
+      allow create: if isSignedIn() && isValidId(userId) && request.auth.uid == userId &&
+                    isValidUserProfile(incoming()) &&
+                    incoming().role == (isAdmin() ? 'admin' : 'branch');
+      // A user may rename themselves, and may adopt the branch + role of the
+      // invitation addressed to their own email — the invite is admin-written,
+      // so its role is the authority, not the caller's claim.
       allow update: if isSignedIn() && isValidId(userId) && (
         isAdmin() ||
         (request.auth.uid == userId && incoming().diff(existing()).affectedKeys().hasOnly(['displayName'])) ||
-        (request.auth.uid == userId &&
-         incoming().diff(existing()).affectedKeys().hasOnly(['branchId', 'role']) &&
-         incoming().role == 'branch' &&
+        (request.auth.uid == userId && incoming().diff(existing()).affectedKeys().hasOnly(['branchId', 'role']) &&
+         request.auth.token.email != null &&
          exists(/databases/$(database)/documents/invites/$(request.auth.token.email)) &&
          get(/databases/$(database)/documents/invites/$(request.auth.token.email)).data.branchId == incoming().branchId &&
          get(/databases/$(database)/documents/invites/$(request.auth.token.email)).data.role == incoming().role)
@@ -140,7 +167,18 @@ service cloud.firestore {
     match /invites/{inviteId} {
       allow get: if isSignedIn() && (isAdmin() || resource.data.email == request.auth.token.email);
       allow list: if isAdmin();
-      allow create, update, delete: if isAdmin() && isValidInviteId(inviteId) && isValidStaffInvite(incoming());
+      allow create, delete: if isAdmin() && isValidInviteId(inviteId) && isValidStaffInvite(incoming());
+      // An admin manages invitations. The invited person may only flip their own
+      // invitation to 'active' on first sign-in — that is the one field, so the
+      // portal's Invited/Active badge reflects reality without handing the
+      // invitee the staff directory.
+      allow update: if isValidInviteId(inviteId) && isValidStaffInvite(incoming()) && (
+        isAdmin() ||
+        (isSignedIn() &&
+         resource.data.email == request.auth.token.email &&
+         incoming().diff(resource.data).affectedKeys().hasOnly(['status']) &&
+         incoming().status == 'active')
+      );
     }
 
     // Branch names are readable by any signed-in staff member, deliberately not

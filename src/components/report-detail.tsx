@@ -66,13 +66,14 @@ export function ReportDetail({
 
   async function review(status: "ok" | "concern") {
     setSaving(true);
-    const ok = await setReportReview(report.id, status, note);
+    const result = await setReportReview(report.id, status, note);
     setSaving(false);
-    if (!ok) {
+    if (!result.ok) {
       toast.error(
-        status === "concern"
-          ? "Add a short note before flagging the report."
-          : "Could not save the review.",
+        result.error ??
+          (status === "concern"
+            ? "Add a short note before flagging the report."
+            : "Could not save the review."),
       );
       return;
     }

@@ -172,20 +172,23 @@ function AdminBody() {
       return;
     }
     setAddingBranch(true);
-    const ok = await addBranch(
+    const result = await addBranch(
       newBranchName.trim(),
       newBranchManagerEmail.trim() || undefined,
       newBranchManagerName.trim() || undefined,
     );
     setAddingBranch(false);
-    if (ok) {
+    if (result.ok) {
       toast.success(`Branch "${newBranchName}" created successfully.`);
       setNewBranchName("");
       setNewBranchManagerEmail("");
       setNewBranchManagerName("");
-    } else {
-      toast.error("Could not create branch. Please try again.");
+      // A manager invitation that did not land is a caveat on a created branch.
+      if (result.error) toast.warning(result.error);
+      return;
     }
+    // The store knows why Firestore refused the write; "try again" hid that.
+    toast.error(result.error ?? "Could not create branch. Please try again.");
   }
 
   async function handleInviteStaff(e: React.FormEvent) {
@@ -201,20 +204,20 @@ function AdminBody() {
     }
 
     setInvitingStaff(true);
-    const ok = await inviteStaff({
+    const result = await inviteStaff({
       email: inviteEmail.trim(),
       displayName: inviteName.trim() || inviteEmail.split("@")[0],
       branchId: targetBranch,
       role: inviteRole,
     });
     setInvitingStaff(false);
-    if (ok) {
+    if (result.ok) {
       toast.success(`Invitation sent to ${inviteEmail}.`);
       setInviteEmail("");
       setInviteName("");
-    } else {
-      toast.error("Failed to send staff invitation.");
+      return;
     }
+    toast.error(result.error ?? "Failed to send staff invitation.");
   }
 
   return (
@@ -435,7 +438,7 @@ function AdminBody() {
                 <CardHeader>
                   <CardTitle className="text-lg flex items-center gap-2">
                     <Building2 className="size-5 text-primary" />
-                    Add Multiple Branches
+                    Add a Branch
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
@@ -590,9 +593,12 @@ function AdminBody() {
                             size="sm"
                             className="text-destructive hover:bg-destructive/10"
                             onClick={async () => {
-                              if (confirm(`Delete branch "${b.name}"?`)) {
-                                await deleteBranch(b.id);
+                              if (!confirm(`Delete branch "${b.name}"?`)) return;
+                              const result = await deleteBranch(b.id);
+                              if (result.ok) {
                                 toast.success(`Branch ${b.name} removed.`);
+                              } else {
+                                toast.error(result.error ?? `Could not remove ${b.name}.`);
                               }
                             }}
                           >
@@ -655,8 +661,12 @@ function AdminBody() {
                           size="sm"
                           className="text-destructive hover:bg-destructive/10"
                           onClick={async () => {
-                            await deleteInvite(inv.id);
-                            toast.success(`Removed invite for ${inv.email}`);
+                            const result = await deleteInvite(inv.id);
+                            if (result.ok) {
+                              toast.success(`Removed invite for ${inv.email}`);
+                            } else {
+                              toast.error(result.error ?? `Could not remove the invite for ${inv.email}.`);
+                            }
                           }}
                         >
                           <Trash2 className="size-4" />

@@ -67,14 +67,18 @@ export function DebtLedger({ branchId }: { branchId?: string | null }) {
       return;
     }
     setSaving(true);
-    const ok = await recordDebtPayment(debt.id, paymentPaise, "Payment received");
+    const result = await recordDebtPayment(
+      debt.id,
+      paymentPaise,
+      "Payment received",
+    );
     setSaving(false);
-    if (ok) {
+    if (result.ok) {
       toast.success(`Payment of ${formatINR(paymentPaise)} recorded.`);
       setOpenPaymentFor(null);
       setPaymentPaise(0);
     } else {
-      toast.error("Could not record the payment.");
+      toast.error(result.error ?? "Could not record the payment.");
     }
   }
 
@@ -92,19 +96,19 @@ export function DebtLedger({ branchId }: { branchId?: string | null }) {
       return;
     }
     setSaving(true);
-    const ok = await addManualDebt({
+    const result = await addManualDebt({
       branchId: targetBranchId,
       productName: productName.trim(),
       amountPaise,
       debtDate: todayISO(),
     });
     setSaving(false);
-    if (ok) {
+    if (result.ok) {
       toast.success("Debt added to the ledger.");
       setProductName("");
       setAmountPaise(0);
     } else {
-      toast.error("Could not add the debt.");
+      toast.error(result.error ?? "Could not add the debt.");
     }
   }
 
