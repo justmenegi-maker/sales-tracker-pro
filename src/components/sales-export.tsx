@@ -134,24 +134,38 @@ export function SalesExportCard({
             </div>
           </div>
 
-          <div className="flex rounded-lg border bg-background p-1">
-            {PRESETS.map((item) => (
-              <button
-                key={item.key}
-                type="button"
-                title={item.hint}
-                aria-pressed={preset === item.key}
-                onClick={() => setPreset(item.key)}
-                className={cn(
-                  "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                  preset === item.key
-                    ? "bg-primary text-primary-foreground shadow-sm"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                )}
-              >
-                {item.label}
-              </button>
-            ))}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex rounded-lg border bg-background p-1">
+              {PRESETS.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  title={item.hint}
+                  aria-pressed={preset === item.key}
+                  onClick={() => setPreset(item.key)}
+                  className={cn(
+                    "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                    preset === item.key
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                  )}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+            <Button
+              onClick={() => void handleDownload()}
+              disabled={busy || invalid}
+              className="gap-2"
+            >
+              {busy ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Download className="size-4" />
+              )}
+              {busy ? "Building PDF…" : "Download PDF"}
+            </Button>
           </div>
         </div>
 
@@ -231,8 +245,8 @@ export function SalesExportCard({
           </div>
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t pt-4">
-          <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t pt-4 text-xs text-muted-foreground">
+          <div className="flex min-w-0 items-center gap-2">
             <CalendarRange className="size-3.5 shrink-0" />
             <span className="truncate">
               {formatDateLabel(start)} – {formatDateLabel(end)} · {scopeLabel}
@@ -241,18 +255,9 @@ export function SalesExportCard({
                 : ""}
             </span>
           </div>
-          <Button
-            onClick={() => void handleDownload()}
-            disabled={busy || invalid}
-            className="gap-2"
-          >
-            {busy ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <Download className="size-4" />
-            )}
-            {busy ? "Building PDF…" : "Download PDF"}
-          </Button>
+          <span className="text-[11px]">
+            Includes graph, best/lowest day and review status
+          </span>
         </div>
       </CardContent>
     </Card>

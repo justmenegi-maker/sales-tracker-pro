@@ -292,6 +292,12 @@ function AdminBody() {
 
         {activeTab === "sales" ? (
           <>
+            {/* Export sits first so it is visible without scrolling on a phone. */}
+            <SalesExportCard
+              summaries={branchSummaries}
+              scopeLabel={scopeLabel}
+            />
+
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
                 Range
@@ -353,11 +359,6 @@ function AdminBody() {
                 hint={`${visibleBranches.length} branches × ${days} days`}
               />
             </div>
-
-            <SalesExportCard
-              summaries={branchSummaries}
-              scopeLabel={scopeLabel}
-            />
 
             <Card>
               <CardHeader className="pb-3">
