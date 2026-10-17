@@ -133,6 +133,22 @@ service cloud.firestore {
              data.createdAt is string && data.createdAt.size() <= 64;
     }
 
+    // An offline sale is a reminder to enter an item in the separate daily-sales
+    // system. Its amount is reference only: the money was already received as
+    // cash or online, so no total is derived from this collection.
+    function isValidOfflineSale(data) {
+      return data.keys().hasAll(['branchId', 'itemName', 'amountPaise', 'saleDate', 'addedToSystem', 'createdAt']) &&
+             data.keys().hasOnly(['branchId', 'itemName', 'amountPaise', 'saleDate', 'addedToSystem', 'addedAt', 'addedByName', 'createdAt']) &&
+             data.branchId is string && data.branchId.size() <= 64 &&
+             data.itemName is string && data.itemName.size() > 0 && data.itemName.size() <= 200 &&
+             data.amountPaise is number && data.amountPaise >= 0 &&
+             data.saleDate is string && data.saleDate.size() <= 10 &&
+             data.addedToSystem is bool &&
+             (!('addedAt' in data) || data.addedAt == null || (data.addedAt is string && data.addedAt.size() <= 64)) &&
+             (!('addedByName' in data) || data.addedByName == null || (data.addedByName is string && data.addedByName.size() <= 100)) &&
+             data.createdAt is string && data.createdAt.size() <= 64;
+    }
+
     match /admins/{adminId} {
       allow get: if isSignedIn() && isValidId(adminId);
       allow list: if isAdmin();
@@ -223,6 +239,20 @@ service cloud.firestore {
          incoming().diff(existing()).affectedKeys().hasOnly(['payments']))
       );
       allow delete: if isAdmin() && isValidId(debtId);
+    }
+
+    match /offlineSales/{saleId} {
+      allow get, list: if isSignedIn() && (isAdmin() || resource.data.branchId == myBranchId());
+      allow create: if isSignedIn() && isValidId(saleId) && isValidOfflineSale(incoming()) &&
+                    (isAdmin() || incoming().branchId == myBranchId());
+      // The branch marks an item as entered in the other system (or undoes it);
+      // the item, price and date stay untouched.
+      allow update: if isSignedIn() && isValidId(saleId) && isValidOfflineSale(incoming()) && (
+        isAdmin() ||
+        (existing().branchId == myBranchId() &&
+         incoming().diff(existing()).affectedKeys().hasOnly(['addedToSystem', 'addedAt', 'addedByName']))
+      );
+      allow delete: if isAdmin() && isValidId(saleId);
     }
   }
 }

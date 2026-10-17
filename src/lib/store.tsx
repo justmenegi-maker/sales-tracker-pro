@@ -52,6 +52,8 @@ import type {
   DailyReport,
   Debt,
   LineCategory,
+  OfflineSale,
+  OfflineSaleInput,
   ReviewStatus,
   SaveReportInput,
   StaffInvite,
@@ -97,6 +99,7 @@ type StoreValue = {
   branches: Branch[];
   reports: DailyReport[];
   debts: Debt[];
+  offlineSales: OfflineSale[];
   invites: StaffInvite[];
   error: string | null;
   clearError: () => void;
@@ -121,6 +124,11 @@ type StoreValue = {
     amountPaise: number;
     debtDate: string;
   }) => Promise<ActionResult>;
+  addOfflineSale: (input: OfflineSaleInput) => Promise<ActionResult>;
+  setOfflineSaleAdded: (
+    saleId: string,
+    added: boolean,
+  ) => Promise<ActionResult>;
   addBranch: (
     name: string,
     managerEmail?: string,
@@ -159,6 +167,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [reports, setReports] = useState<DailyReport[]>([]);
   const [debts, setDebts] = useState<Debt[]>([]);
+  const [offlineSales, setOfflineSales] = useState<OfflineSale[]>([]);
   const [invites, setInvites] = useState<StaffInvite[]>([]);
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(true);
@@ -431,6 +440,50 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       );
     }
 
+    // Offline-sale reminders - same branch scoping as debts. These never feed
+    // into a report total: the money was already taken as cash or online.
+    const offlineSalesQuery =
+      session.role === "admin"
+        ? collection(db, "offlineSales")
+        : session.branchId
+          ? query(collection(db, "offlineSales"), where("branchId", "==", session.branchId))
+          : null;
+
+    let unsubOfflineSales = () => {};
+    if (offlineSalesQuery) {
+      unsubOfflineSales = onSnapshot(
+        offlineSalesQuery,
+        (snapshot) => {
+          if (!mounted.current) return;
+          const list: OfflineSale[] = snapshot.docs.map((docSnap) => {
+            const d = docSnap.data();
+            return {
+              id: docSnap.id,
+              branchId: d.branchId,
+              itemName: d.itemName,
+              amountPaise: d.amountPaise,
+              saleDate: d.saleDate,
+              addedToSystem: d.addedToSystem || false,
+              addedAt: d.addedAt || null,
+              addedByName: d.addedByName || null,
+              createdAt: d.createdAt,
+            };
+          });
+          setOfflineSales(list);
+        },
+        (error) => {
+          setError(
+            firestoreErrorMessage(
+              error,
+              OperationType.LIST,
+              "offlineSales",
+              "load the offline sale reminders",
+            ),
+          );
+        },
+      );
+    }
+
     // Staff Invites listener (Only loaded for Admin)
     let unsubInvites = () => {};
     if (session.role === "admin") {
@@ -464,6 +517,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       unsubBranches();
       unsubReports();
       unsubDebts();
+      unsubOfflineSales();
       unsubInvites();
     };
   }, [session]);
@@ -813,6 +867,77 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     [session],
   );
 
+  const addOfflineSale = useCallback(
+    async (input: OfflineSaleInput): Promise<ActionResult> => {
+      setError(null);
+      // A branch login can only add reminders for its own branch.
+      if (session?.role === "branch" && session.branchId && input.branchId !== session.branchId) {
+        const message = "You can only add offline sales for your assigned branch.";
+        setError(message);
+        return { ok: false, error: message };
+      }
+
+      const itemName = input.itemName.trim();
+      if (!itemName) {
+        const message = "Add the item name.";
+        setError(message);
+        return { ok: false, error: message };
+      }
+      if (!Number.isInteger(input.amountPaise) || input.amountPaise < 0) {
+        const message = "The price must be a non-negative amount.";
+        setError(message);
+        return { ok: false, error: message };
+      }
+
+      const saleId = makeId("offline");
+      try {
+        await setDoc(doc(db, "offlineSales", saleId), {
+          branchId: input.branchId,
+          itemName,
+          amountPaise: input.amountPaise,
+          saleDate: input.saleDate,
+          addedToSystem: false,
+          createdAt: new Date().toISOString(),
+        });
+        return { ok: true, error: null };
+      } catch (err) {
+        const message = firestoreErrorMessage(
+          err,
+          OperationType.CREATE,
+          `offlineSales/${saleId}`,
+          "add this offline sale",
+        );
+        setError(message);
+        return { ok: false, error: message };
+      }
+    },
+    [session],
+  );
+
+  const setOfflineSaleAdded = useCallback(
+    async (saleId: string, added: boolean): Promise<ActionResult> => {
+      setError(null);
+      try {
+        await updateDoc(doc(db, "offlineSales", saleId), {
+          addedToSystem: added,
+          addedAt: added ? new Date().toISOString() : null,
+          addedByName: added ? session?.displayName || "Staff" : null,
+        });
+        return { ok: true, error: null };
+      } catch (err) {
+        const message = firestoreErrorMessage(
+          err,
+          OperationType.UPDATE,
+          `offlineSales/${saleId}`,
+          "update this offline sale reminder",
+        );
+        setError(message);
+        return { ok: false, error: message };
+      }
+    },
+    [session],
+  );
+
   const addBranch = useCallback(
     async (
       name: string,
@@ -989,6 +1114,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       branches,
       reports,
       debts,
+      offlineSales,
       invites,
       error,
       clearError: () => setError(null),
@@ -1000,6 +1126,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       setReportReview,
       recordDebtPayment,
       addManualDebt,
+      addOfflineSale,
+      setOfflineSaleAdded,
       addBranch,
       deleteBranch,
       inviteStaff,
@@ -1008,6 +1136,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     [
       addBranch,
       addManualDebt,
+      addOfflineSale,
       branches,
       debts,
       deleteBranch,
@@ -1015,11 +1144,13 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       error,
       inviteStaff,
       invites,
+      offlineSales,
       ready,
       recordDebtPayment,
       reports,
       saveReport,
       session,
+      setOfflineSaleAdded,
       setReportReview,
       signIn,
       signInWithGoogle,

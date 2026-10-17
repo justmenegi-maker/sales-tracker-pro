@@ -94,6 +94,32 @@ export type Debt = {
   payments: DebtPayment[];
 };
 
+/**
+ * A reminder to enter an offline sale in the separate daily-sales system.
+ *
+ * `amountPaise` is the item price kept for reference only. The money for an
+ * offline sale has already been received as cash or online, so this value is
+ * never added to Total Sale — adding it again would double count the day.
+ */
+export type OfflineSale = {
+  id: string;
+  branchId: string;
+  itemName: string;
+  amountPaise: number;
+  saleDate: string;
+  addedToSystem: boolean;
+  addedAt: string | null;
+  addedByName: string | null;
+  createdAt: string;
+};
+
+export type OfflineSaleInput = {
+  branchId: string;
+  itemName: string;
+  amountPaise: number;
+  saleDate: string;
+};
+
 export type SaveReportInput = {
   branchId: string;
   reportDate: string;
@@ -179,6 +205,31 @@ export function deriveDebtStatus(debt: Debt): DebtStatus {
   if (paid >= debt.amountPaise) return "cleared";
   if (paid > 0) return "partial";
   return "open";
+}
+
+/**
+ * Reminder counts for the offline-sale section.
+ *
+ * Deliberately outside `computeTotalSale`: the money already arrived as cash or
+ * online, so the price on a reminder is reference data, not another sale.
+ */
+export function summarizeOfflineSales(sales: OfflineSale[]): {
+  pending: number;
+  added: number;
+  pendingPaise: number;
+  addedPaise: number;
+} {
+  const summary = { pending: 0, added: 0, pendingPaise: 0, addedPaise: 0 };
+  for (const sale of sales) {
+    if (sale.addedToSystem) {
+      summary.added += 1;
+      summary.addedPaise += sale.amountPaise;
+    } else {
+      summary.pending += 1;
+      summary.pendingPaise += sale.amountPaise;
+    }
+  }
+  return summary;
 }
 
 /** Reports for one branch + date, newest first. */

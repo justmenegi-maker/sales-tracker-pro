@@ -14,6 +14,7 @@ import {
   Users,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
+import { OfflineSales } from "@/components/offline-sales";
 import { ReportsTable } from "@/components/reports-table";
 import { RequireAuth } from "@/components/require-auth";
 import { TrendChart } from "@/components/trend-chart";
@@ -427,6 +428,11 @@ function AdminBody() {
                   ? "No reports filed in this range for the selected branches."
                   : "Nothing matches this review filter in the selected range."
               }
+            />
+
+            {/* Reminder only: an offline sale's price is never part of Total Sale. */}
+            <OfflineSales
+              branchId={branchFilter === "all" ? null : branchFilter}
             />
           </>
         ) : (

@@ -11,13 +11,14 @@ import {
   resolveFilingBranch,
   reviewCounts,
   sectionTotals,
+  summarizeOfflineSales,
   summarizeReports,
   totalsByBranchDate,
   totalsByDate,
   trendSeries,
   withinRange,
 } from "./report";
-import type { Branch, DailyReport, Debt } from "./report";
+import type { Branch, DailyReport, Debt, OfflineSale } from "./report";
 
 function report(overrides: Partial<DailyReport> = {}): DailyReport {
   return {
@@ -44,6 +45,21 @@ function report(overrides: Partial<DailyReport> = {}): DailyReport {
     reviewNote: null,
     reviewedByName: null,
     reviewedAt: null,
+    ...overrides,
+  };
+}
+
+function offlineSale(overrides: Partial<OfflineSale> = {}): OfflineSale {
+  return {
+    id: "offline_1",
+    branchId: "branch_kaza",
+    itemName: "Ceiling fan",
+    amountPaise: 320000,
+    saleDate: "2026-10-13",
+    addedToSystem: false,
+    addedAt: null,
+    addedByName: null,
+    createdAt: "2026-10-13T14:20:00.000Z",
     ...overrides,
   };
 }
@@ -277,6 +293,45 @@ describe("branchIdFromName", () => {
     for (const name of ["SK Tapri South Ex", "Kaza / Highway", "!!!"]) {
       expect(branchIdFromName(name)).toMatch(/^[a-zA-Z0-9_-]{1,128}$/);
     }
+  });
+});
+
+describe("summarizeOfflineSales", () => {
+  it("counts pending and added reminders separately", () => {
+    const summary = summarizeOfflineSales([
+      offlineSale({ id: "a", amountPaise: 320000 }),
+      offlineSale({ id: "b", amountPaise: 150000, addedToSystem: true }),
+      offlineSale({ id: "c", amountPaise: 80000, addedToSystem: true }),
+    ]);
+
+    expect(summary).toEqual({
+      pending: 1,
+      added: 2,
+      pendingPaise: 320000,
+      addedPaise: 230000,
+    });
+  });
+
+  it("returns zeros for an empty reminder list", () => {
+    expect(summarizeOfflineSales([])).toEqual({
+      pending: 0,
+      added: 0,
+      pendingPaise: 0,
+      addedPaise: 0,
+    });
+  });
+
+  it("never changes a report's Total Sale", () => {
+    // Offline-sale prices are reference data: the cash or online amount has
+    // already been counted, so including the price again would double it.
+    const day = report();
+    const before = reportTotalPaise(day);
+    const summary = summarizeOfflineSales([
+      offlineSale({ amountPaise: 999900 }),
+    ]);
+
+    expect(summary.pendingPaise).toBe(999900);
+    expect(reportTotalPaise(day)).toBe(before);
   });
 });
 

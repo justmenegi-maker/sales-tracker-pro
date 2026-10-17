@@ -14,7 +14,7 @@ and the database can never disagree.
 | --- | --- | --- |
 | `/` | public | Landing page; signed-in staff are sent straight to their workspace |
 | `/auth/login` | public | Firebase sign-in — Google (Gmail) or email/password |
-| `/dashboard` | branch + admin | File the day's report, history, debt ledger |
+| `/dashboard` | branch + admin | File the day's report, history, debt ledger, offline sale reminders |
 | `/admin` | admin only | Cross-branch totals, trend, missing days, open and review any report, void a report, manage branches and staff invites |
 
 ## Reviewing a day
@@ -25,6 +25,24 @@ concern** with a note. New reports start as `pending`, so the admin view always
 shows a review queue; a flagged note is visible to the branch too. Reviewing
 never edits a branch's numbers: `status` (active/voided) and the review state are
 separate fields.
+
+## Offline sale reminders
+
+The dashboard and the admin overview both carry an **Offline sale** section next
+to the debt ledger. It is a reminder list, not a sale: an offline sale's money is
+already received as cash or online, so its price is **never** added to Total Sale
+or to any report. Each entry is an item name, a reference price and a date, plus
+a state — *Not added* (still to be entered in the separate daily-sales system) or
+*Added* (someone has entered it there). The same button undoes a mistaken mark,
+and the per-branch counts are derived from the documents rather than stored.
+
+```
+offlineSales/{id}  branchId, itemName, amountPaise, saleDate,
+                   addedToSystem, addedAt, addedByName, createdAt
+```
+
+A branch login sees and writes only its own branch's reminders, exactly like
+`debts`; an admin sees every branch.
 
 The app is exported statically (`next.config.ts` → `output: "export"`, `distDir: "dist"`),
 so routes are guarded in the browser by `src/components/require-auth.tsx`.
@@ -44,6 +62,7 @@ the others without a reload.
 | `branches/{id}` | branch name, active flag, optional manager email |
 | `reports/{id}` | one filed day: cash + online amounts, line items, review state |
 | `debts/{id}` | credit sales and their payments |
+| `offlineSales/{id}` | offline sale reminders: item, reference price, added-to-system state (never counted in Total Sale) |
 | `invites/{email}` | staff invitations; the invite assigns the branch on first sign-in |
 
 ## Roles

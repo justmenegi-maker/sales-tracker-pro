@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { DebtLedger } from "@/components/debt-ledger";
+import { OfflineSales } from "@/components/offline-sales";
 import { ReportForm } from "@/components/report-form";
 import { ReportsTable } from "@/components/reports-table";
 import { RequireAuth } from "@/components/require-auth";
@@ -181,6 +182,9 @@ function DashboardBody() {
           />
           <DebtLedger branchId={effectiveBranchId} />
         </div>
+
+        {/* Reminders only: these prices are already in the cash/online totals. */}
+        <OfflineSales branchId={effectiveBranchId} />
       </div>
     </AppShell>
   );
