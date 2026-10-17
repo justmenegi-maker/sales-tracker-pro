@@ -16,6 +16,7 @@ import {
 import { AppShell } from "@/components/app-shell";
 import { OfflineSaleReminders } from "@/components/offline-sales";
 import { ReportsTable } from "@/components/reports-table";
+import { SalesExportCard } from "@/components/sales-export";
 import { RequireAuth } from "@/components/require-auth";
 import { TrendChart } from "@/components/trend-chart";
 import { Badge } from "@/components/ui/badge";
@@ -83,13 +84,45 @@ function AdminBody() {
     [rangeStart, summaries, today],
   );
 
-  const inRange = useMemo(
+  // Voided reports stay visible in the table but never count as sales.
+  const rangeActive = useMemo(
+    () => rangeAll.filter((summary) => summary.report.status === "active"),
+    [rangeAll],
+  );
+
+  const branchSummaries = useMemo(
+    () =>
+      branchFilter === "all"
+        ? summaries
+        : summaries.filter(
+            (summary) => summary.report.branchId === branchFilter,
+          ),
+    [branchFilter, summaries],
+  );
+
+  const inRangeAll = useMemo(
     () =>
       branchFilter === "all"
         ? rangeAll
         : rangeAll.filter((summary) => summary.report.branchId === branchFilter),
     [branchFilter, rangeAll],
   );
+
+  const inRange = useMemo(
+    () =>
+      branchFilter === "all"
+        ? rangeActive
+        : rangeActive.filter(
+            (summary) => summary.report.branchId === branchFilter,
+          ),
+    [branchFilter, rangeActive],
+  );
+
+  const scopeLabel =
+    branchFilter === "all"
+      ? "All branches"
+      : branches.find((branch) => branch.id === branchFilter)?.name ??
+        "Selected branch";
 
   const rangeTotal = useMemo(
     () => inRange.reduce((sum, summary) => sum + summary.totalPaise, 0),
@@ -107,9 +140,9 @@ function AdminBody() {
   );
 
   const perBranch = useMemo(() => {
-    const totalsByBranch = totalsByBranchDate(rangeAll);
+    const totalsByBranch = totalsByBranchDate(rangeActive);
     const datesByBranch = new Map<string, Set<string>>();
-    for (const summary of rangeAll) {
+    for (const summary of rangeActive) {
       const dates = datesByBranch.get(summary.report.branchId) ?? new Set();
       dates.add(summary.report.reportDate);
       datesByBranch.set(summary.report.branchId, dates);
@@ -144,7 +177,7 @@ function AdminBody() {
         lastFiledDate: lastFiled,
       };
     });
-  }, [branches, debts, rangeAll, summaries]);
+  }, [branches, debts, rangeActive, summaries]);
 
   const visibleBranches = perBranch.filter(
     (row) => branchFilter === "all" || row.branch.id === branchFilter,
@@ -157,14 +190,14 @@ function AdminBody() {
   const tableSummaries = useMemo(() => {
     const filtered =
       reviewFilter === "all"
-        ? inRange
-        : inRange.filter(
+        ? inRangeAll
+        : inRangeAll.filter(
             (summary) => summary.report.reviewStatus === reviewFilter,
           );
     return [...filtered].sort((a, b) =>
       a.report.reportDate < b.report.reportDate ? 1 : -1,
     );
-  }, [inRange, reviewFilter]);
+  }, [inRangeAll, reviewFilter]);
 
   async function handleAddBranch(e: React.FormEvent) {
     e.preventDefault();
@@ -321,6 +354,11 @@ function AdminBody() {
               />
             </div>
 
+            <SalesExportCard
+              summaries={branchSummaries}
+              scopeLabel={scopeLabel}
+            />
+
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-lg">
@@ -393,31 +431,50 @@ function AdminBody() {
               })}
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                Filter Review
-              </span>
-              <Button
-                size="sm"
-                variant={reviewFilter === "all" ? "default" : "outline"}
-                onClick={() => setReviewFilter("all")}
-              >
-                All
-              </Button>
-              {REVIEW_META.map((meta) => (
+            <div className="space-y-3 pt-2">
+              <div className="flex flex-wrap items-end justify-between gap-2">
+                <div>
+                  <h2 className="font-display text-lg font-semibold tracking-tight">
+                    Daily report review
+                  </h2>
+                  <p className="text-xs text-muted-foreground">
+                    Open any day to compare it with the branch&apos;s usual
+                    sale, then tick it OK or flag a concern.
+                  </p>
+                </div>
+                <span className="text-xs text-muted-foreground">
+                  {tableSummaries.length} report
+                  {tableSummaries.length === 1 ? "" : "s"}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
+                  Filter
+                </span>
                 <Button
-                  key={meta.key}
                   size="sm"
-                  variant={reviewFilter === meta.key ? "default" : "outline"}
-                  onClick={() => setReviewFilter(meta.key)}
+                  variant={reviewFilter === "all" ? "default" : "outline"}
+                  onClick={() => setReviewFilter("all")}
                 >
-                  {meta.label}
+                  All
                 </Button>
-              ))}
+                {REVIEW_META.map((meta) => (
+                  <Button
+                    key={meta.key}
+                    size="sm"
+                    variant={reviewFilter === meta.key ? "default" : "outline"}
+                    onClick={() => setReviewFilter(meta.key)}
+                  >
+                    {meta.label}
+                  </Button>
+                ))}
+              </div>
             </div>
 
             <ReportsTable
               summaries={tableSummaries}
+              contextSummaries={branchSummaries}
+              detailed
               title="Reports in range"
               showBranch
               canReview

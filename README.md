@@ -20,11 +20,27 @@ and the database can never disagree.
 ## Reviewing a day
 
 Admins open any filed report — any branch, any date — from the report list in
-`/admin`, see its sections and line items, then either **tick it OK** or **flag a
+`/admin`, see its section breakdown as shares of Total Sale, its line items with
+per-category subtotals, and how the day compares with the branch's usual filed
+day, the previous day and the last seven days. Each queue row also shows the
+section mix and the reviewer trail inline, then either **tick it OK** or **flag a
 concern** with a note. New reports start as `pending`, so the admin view always
 shows a review queue; a flagged note is visible to the branch too. Reviewing
 never edits a branch's numbers: `status` (active/voided) and the review state are
 separate fields.
+
+## Sales PDF export
+
+The admin overview has an **Export sales report** card with three ranges —
+*Weekly* (last 7 days), *Monthly* (this month to date) and *Custom* (two dates) —
+scoped to the branch filter above it. The PDF (`src/lib/sales-pdf.ts`) contains
+the daily bar chart with the best day highlighted, a six-month monthly bar
+chart, best and lowest sale days with their share of the range, the section mix,
+a branch breakdown, a day-by-day ledger that marks missing filings, and the
+admin review status with every flagged concern. Voided reports are excluded and
+called out in the header. `buildRangeSales` in `src/lib/sales-analytics.ts`
+computes every figure once for both the preview and the PDF; best/lowest are
+taken over filed days only so a missing report is never shown as the lowest sale.
 
 ## Offline sale reminders
 
@@ -126,6 +142,7 @@ the workspace environment (Settings → Environment). Never commit keys.
 
 - Next.js (App Router, static export) + React 19
 - Firebase 13 — Authentication + Cloud Firestore
+- jsPDF — vector PDF export (lazy-loaded from the admin page)
 - Tailwind v4 (PostCSS plugin in `postcss.config.mjs`, theme tokens in `src/app/globals.css`)
 - shadcn/ui-style primitives in `src/components/ui`
 - Vitest for the money/totals/report logic

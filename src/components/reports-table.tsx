@@ -9,10 +9,22 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ReportDetail } from "@/components/report-detail";
-import { formatDateLabel, formatINR, formatWeekdayShort } from "@/lib/format";
-import { reviewLabel } from "@/lib/report";
-import type { ReportSummary } from "@/lib/report";
+import { formatDateLabel, formatINR, formatINRWhole, formatWeekdayShort } from "@/lib/format";
+import { SECTION_META, reviewLabel } from "@/lib/report";
+import type { ReportSummary, SectionKey } from "@/lib/report";
 import { useAppStore } from "@/lib/store";
+import { cn } from "@/lib/utils";
+
+const SECTION_FILL: Record<SectionKey, string> = {
+  cash: "bg-primary",
+  online: "bg-teal-500",
+  finance: "bg-amber-500",
+  debt: "bg-rose-500",
+  exchange: "bg-sky-500",
+  cheque: "bg-violet-500",
+  store_use: "bg-orange-400",
+  others: "bg-slate-400",
+};
 
 const REVIEW_BADGE: Record<
   ReportSummary["report"]["reviewStatus"],
@@ -31,6 +43,8 @@ export function ReportsTable({
   canVoid = false,
   emptyHint = "No reports filed yet.",
   limit = 10,
+  detailed = false,
+  contextSummaries,
 }: {
   summaries: ReportSummary[];
   title?: string;
@@ -39,6 +53,10 @@ export function ReportsTable({
   canVoid?: boolean;
   emptyHint?: string;
   limit?: number;
+  /** Admin review rows: show the section mix and the review trail inline. */
+  detailed?: boolean;
+  /** Branch history used by the detail sheet to compare a day with its usual. */
+  contextSummaries?: ReportSummary[];
 }) {
   const { voidReport, setReportReview } = useAppStore();
   const [openId, setOpenId] = useState<string | null>(null);
@@ -91,10 +109,14 @@ export function ReportsTable({
           ) : (
             <div className="divide-y">
               {summaries.slice(0, visible).map((summary) => {
-                const { report, totalPaise, financeCount } = summary;
+                const { report, totalPaise, financeCount, sections } = summary;
                 const reviewed = report.reviewStatus !== "pending";
+                const composition = SECTION_META.map((meta) => ({
+                  ...meta,
+                  amount: sections[meta.key],
+                })).filter((section) => section.amount > 0);
                 return (
-                  <div key={report.id} className="py-3">
+                  <div key={report.id} className="py-3.5">
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
@@ -115,7 +137,7 @@ export function ReportsTable({
                             {showBranch ? `${report.branchName} · ` : ""}
                             {report.submittedByName}
                             {financeCount > 0 ? ` · ${financeCount} finance` : ""}
-                            {reviewed && report.reviewNote
+                            {!detailed && reviewed && report.reviewNote
                               ? ` · ${report.reviewNote}`
                               : ""}
                           </span>
@@ -179,6 +201,76 @@ export function ReportsTable({
                       </div>
                     </div>
 
+                    {detailed ? (
+                      <div className="mt-2 space-y-2 pl-1">
+                        <div
+                          className="flex h-1.5 gap-px overflow-hidden rounded-full bg-muted"
+                          role="img"
+                          aria-label="Section mix"
+                        >
+                          {composition.map((section) => (
+                            <span
+                              key={section.key}
+                              className={cn(SECTION_FILL[section.key], "h-full")}
+                              style={{
+                                width: `${(section.amount / Math.max(totalPaise, 1)) * 100}%`,
+                              }}
+                              title={`${section.label}: ${formatINRWhole(section.amount)}`}
+                            />
+                          ))}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+                          {composition.slice(0, 3).map((section) => (
+                            <span
+                              key={section.key}
+                              className="inline-flex items-center gap-1"
+                            >
+                              <span
+                                className={cn(
+                                  "size-1.5 rounded-full",
+                                  SECTION_FILL[section.key],
+                                )}
+                              />
+                              {section.label}{" "}
+                              <span className="tnum text-foreground">
+                                {formatINRWhole(section.amount)}
+                              </span>
+                            </span>
+                          ))}
+                          {composition.length > 3 ? (
+                            <span>+{composition.length - 3} more</span>
+                          ) : null}
+                          <span className="text-muted-foreground/60">|</span>
+                          <span>
+                            {report.lines.length} line item
+                            {report.lines.length === 1 ? "" : "s"}
+                          </span>
+                          <span className="text-muted-foreground/60">|</span>
+                          <span
+                            className={cn(
+                              report.reviewStatus === "concern" &&
+                                "text-destructive",
+                              report.reviewStatus === "ok" && "text-primary",
+                            )}
+                          >
+                            {reviewed
+                              ? `${reviewLabel(report.reviewStatus)}${
+                                  report.reviewedByName
+                                    ? ` by ${report.reviewedByName}`
+                                    : ""
+                                }`
+                              : "No admin check yet"}
+                          </span>
+                          {report.reviewStatus === "concern" &&
+                          report.reviewNote ? (
+                            <span className="w-full truncate text-destructive">
+                              “{report.reviewNote}”
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+                    ) : null}
+
                     {voidingFor === report.id ? (
                       <div className="mt-3 flex flex-wrap items-end gap-2 rounded-md border bg-muted/40 p-3">
                         <div className="min-w-0 flex-1 space-y-1">
@@ -225,6 +317,7 @@ export function ReportsTable({
       {openSummary ? (
         <ReportDetail
           summary={openSummary}
+          context={contextSummaries}
           initialFlag={flagFirst}
           onClose={() => {
             setOpenId(null);

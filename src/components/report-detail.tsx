@@ -1,19 +1,25 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Check, Flag, X } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, Check, Flag, Minus, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { formatDateLabel, formatINR, formatWeekdayShort } from "@/lib/format";
+import {
+  formatDateLabel,
+  formatINR,
+  formatINRCompact,
+  formatWeekdayShort,
+} from "@/lib/format";
 import {
   LINE_CATEGORY_META,
   SECTION_META,
   reviewLabel,
 } from "@/lib/report";
 import type { ReportSummary } from "@/lib/report";
+import { reportContext } from "@/lib/sales-analytics";
 import { useAppStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -26,16 +32,51 @@ const REVIEW_BADGE: Record<
   concern: "destructive",
 };
 
+function ChangePill({ change }: { change: number | null }) {
+  if (change === null) {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+        <Minus className="size-3" /> no history
+      </span>
+    );
+  }
+  const up = change >= 0;
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 text-xs font-medium",
+        up ? "text-primary" : "text-destructive",
+      )}
+    >
+      {up ? (
+        <ArrowUpRight className="size-3.5" />
+      ) : (
+        <ArrowDownRight className="size-3.5" />
+      )}
+      {up ? "+" : ""}
+      {change}% vs usual
+    </span>
+  );
+}
+
 /**
  * Opens one filed report — any day, any branch — with its sections, its lines
  * and (for admins) the review controls.
+ *
+ * When `context` is supplied (the admin review queue passes the reports in the
+ * selected range), the sheet also compares the day with that branch's usual
+ * filed day and the day before, so a reviewer can judge the number instead of
+ * only reading it.
  */
 export function ReportDetail({
   summary,
+  context,
   initialFlag = false,
   onClose,
 }: {
   summary: ReportSummary;
+  /** Same-scope reports used for the "usual day" comparison. */
+  context?: ReportSummary[];
   /** Open straight into the concern note, e.g. from the table's flag action. */
   initialFlag?: boolean;
   onClose: () => void;
@@ -49,6 +90,16 @@ export function ReportDetail({
     initialFlag || report.reviewStatus === "concern",
   );
   const [saving, setSaving] = useState(false);
+
+  const stats = useMemo(
+    () => (context ? reportContext(context, summary) : null),
+    [context, summary],
+  );
+
+  const linesTotal = report.lines.reduce(
+    (sum, line) => sum + line.amountPaise,
+    0,
+  );
 
   // Close on Escape and keep the page behind the modal from scrolling.
   useEffect(() => {
@@ -129,13 +180,36 @@ export function ReportDetail({
 
         <div className="space-y-5 px-5 py-4">
           <div className="rounded-lg border border-primary/30 bg-primary/5 p-4">
-            <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
-              Total Sale
-            </p>
-            <p className="tnum font-display text-3xl font-semibold tracking-tight">
-              {formatINR(totalPaise)}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+                  Total Sale
+                </p>
+                <p className="tnum font-display text-3xl font-semibold tracking-tight">
+                  {formatINR(totalPaise)}
+                </p>
+              </div>
+              <div className="text-right text-xs text-muted-foreground">
+                <p>
+                  Cash{" "}
+                  <span className="tnum font-medium text-foreground">
+                    {formatINR(report.cashPaise)}
+                  </span>
+                </p>
+                <p className="mt-0.5">
+                  Online{" "}
+                  <span className="tnum font-medium text-foreground">
+                    {formatINR(report.onlinePaise)}
+                  </span>
+                </p>
+                <p className="mt-0.5">
+                  {report.lines.length} line item
+                  {report.lines.length === 1 ? "" : "s"} ·{" "}
+                  <span className="tnum">{formatINR(linesTotal)}</span>
+                </p>
+              </div>
+            </div>
+            <p className="mt-2 text-[11px] text-muted-foreground">
               Cash + Online + Finance + Debt + Exchange + Cheque + Store use +
               Others
             </p>
@@ -147,23 +221,96 @@ export function ReportDetail({
             </p>
           ) : null}
 
-          <section>
-            <h3 className="mb-2 text-sm font-semibold">Sections</h3>
-            <dl className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
-              {SECTION_META.map((section) => (
-                <div
-                  key={section.key}
-                  className={cn(
-                    "flex items-baseline justify-between gap-3 border-b border-dashed pb-1",
-                    sections[section.key] === 0 && "text-muted-foreground",
-                  )}
-                >
-                  <dt className="text-sm">{section.label}</dt>
-                  <dd className="tnum text-sm">
-                    {formatINR(sections[section.key])}
+          {stats && stats.sampleDays > 0 ? (
+            <section>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold">Performance context</h3>
+                <ChangePill change={stats.changeVsTypical} />
+              </div>
+              <dl className="grid gap-2 sm:grid-cols-3">
+                <div className="rounded-md border bg-muted/30 px-3 py-2">
+                  <dt className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+                    Usual filed day
+                  </dt>
+                  <dd className="tnum mt-1 font-display text-base font-semibold">
+                    {stats.typicalPaise !== null
+                      ? formatINR(stats.typicalPaise)
+                      : "—"}
                   </dd>
+                  <p className="text-[10px] text-muted-foreground">
+                    avg of {stats.sampleDays} previous day
+                    {stats.sampleDays === 1 ? "" : "s"}
+                  </p>
                 </div>
-              ))}
+                <div className="rounded-md border bg-muted/30 px-3 py-2">
+                  <dt className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+                    Previous day
+                  </dt>
+                  <dd className="tnum mt-1 font-display text-base font-semibold">
+                    {stats.previousDay
+                      ? formatINR(stats.previousDay.totalPaise)
+                      : "—"}
+                  </dd>
+                  <p className="text-[10px] text-muted-foreground">
+                    {stats.previousDay
+                      ? formatDateLabel(stats.previousDay.date)
+                      : "no report filed"}
+                  </p>
+                </div>
+                <div className="rounded-md border bg-muted/30 px-3 py-2">
+                  <dt className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+                    Previous 7 days
+                  </dt>
+                  <dd className="tnum mt-1 font-display text-base font-semibold">
+                    {stats.lowestInRange
+                      ? `${formatINRCompact(stats.lowestInRange.totalPaise)} – ${
+                          stats.bestInRange
+                            ? formatINRCompact(stats.bestInRange.totalPaise)
+                            : "—"
+                        }`
+                      : "—"}
+                  </dd>
+                  <p className="text-[10px] text-muted-foreground">
+                    lowest to highest filed day
+                  </p>
+                </div>
+              </dl>
+            </section>
+          ) : null}
+
+          <section>
+            <h3 className="mb-2 text-sm font-semibold">Section breakdown</h3>
+            <dl className="space-y-2">
+              {SECTION_META.map((section) => {
+                const value = sections[section.key];
+                const share =
+                  totalPaise > 0 ? (value / totalPaise) * 100 : 0;
+                return (
+                  <div
+                    key={section.key}
+                    className={cn(
+                      "grid grid-cols-[1fr_auto] items-baseline gap-x-3 border-b border-dashed pb-1.5",
+                      value === 0 && "text-muted-foreground",
+                    )}
+                  >
+                    <dt className="text-sm">{section.label}</dt>
+                    <dd className="tnum text-right text-sm">
+                      {formatINR(value)}
+                    </dd>
+                    <div className="col-span-2 mt-1 flex items-center gap-2">
+                      <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
+                        <div
+                          className="h-full rounded-full bg-primary"
+                          style={{ width: `${share}%` }}
+                        />
+                      </div>
+                      <span className="tnum w-9 text-right text-[10px] text-muted-foreground">
+                        {Math.round(share)}%
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
             </dl>
           </section>
 
@@ -175,11 +322,20 @@ export function ReportDetail({
                   (line) => line.category === meta.key,
                 );
                 if (lines.length === 0) return null;
+                const subtotal = lines.reduce(
+                  (sum, line) => sum + line.amountPaise,
+                  0,
+                );
                 return (
                   <div key={meta.key}>
-                    <p className="text-xs uppercase tracking-wider text-muted-foreground">
-                      {meta.label}
-                    </p>
+                    <div className="flex items-baseline justify-between gap-3 border-b pb-1">
+                      <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                        {meta.label} ({lines.length})
+                      </p>
+                      <p className="tnum text-xs font-medium">
+                        {formatINR(subtotal)}
+                      </p>
+                    </div>
                     <ul className="mt-1 space-y-1">
                       {lines.map((line) => (
                         <li
@@ -189,7 +345,7 @@ export function ReportDetail({
                           <span className="truncate">
                             {line.label || "—"}
                           </span>
-                          <span className="tnum">
+                          <span className="tnum shrink-0">
                             {formatINR(line.amountPaise)}
                           </span>
                         </li>
@@ -202,19 +358,27 @@ export function ReportDetail({
           ) : null}
 
           <section className="rounded-lg border bg-muted/40 p-4">
-            <h3 className="text-sm font-semibold">Review</h3>
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <h3 className="text-sm font-semibold">Review</h3>
+              {report.reviewedAt ? (
+                <span className="text-[11px] text-muted-foreground">
+                  Updated {report.reviewedAt.slice(0, 10)}
+                </span>
+              ) : null}
+            </div>
             {report.reviewStatus === "pending" ? (
               <p className="mt-1 text-sm text-muted-foreground">
                 No admin has checked this report yet.
               </p>
             ) : (
               <p className="mt-1 text-sm text-muted-foreground">
-                Marked <span className="text-foreground">
+                Marked{" "}
+                <span className="text-foreground">
                   {reviewLabel(report.reviewStatus)}
                 </span>
                 {report.reviewedByName ? ` by ${report.reviewedByName}` : ""}
                 {report.reviewedAt
-                  ? ` on ${report.reviewedAt.slice(0, 10)}`
+                  ? ` on ${formatDateLabel(report.reviewedAt.slice(0, 10))}`
                   : ""}
                 .
               </p>
@@ -222,6 +386,11 @@ export function ReportDetail({
             {report.reviewStatus === "concern" && report.reviewNote ? (
               <p className="mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm">
                 {report.reviewNote}
+              </p>
+            ) : null}
+            {report.reviewStatus === "ok" && report.reviewNote ? (
+              <p className="mt-2 text-sm text-muted-foreground">
+                Note: {report.reviewNote}
               </p>
             ) : null}
 
@@ -245,7 +414,7 @@ export function ReportDetail({
                     onClick={() => void review("ok")}
                   >
                     <Check className="size-4" />
-                    Tick OK
+                    {report.reviewStatus === "ok" ? "Re-confirm OK" : "Tick OK"}
                   </Button>
                   {flagging ? (
                     <Button
