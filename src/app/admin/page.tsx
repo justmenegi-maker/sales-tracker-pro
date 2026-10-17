@@ -14,7 +14,7 @@ import {
   Users,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
-import { OfflineSales } from "@/components/offline-sales";
+import { OfflineSaleReminders } from "@/components/offline-sales";
 import { ReportsTable } from "@/components/reports-table";
 import { RequireAuth } from "@/components/require-auth";
 import { TrendChart } from "@/components/trend-chart";
@@ -430,9 +430,10 @@ function AdminBody() {
               }
             />
 
-            {/* Reminder only: an offline sale's price is never part of Total Sale. */}
-            <OfflineSales
+            {/* Review queue: tick a reminder once it is entered in the sales system. */}
+            <OfflineSaleReminders
               branchId={branchFilter === "all" ? null : branchFilter}
+              variant="admin"
             />
           </>
         ) : (

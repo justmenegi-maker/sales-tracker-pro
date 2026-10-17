@@ -28,13 +28,15 @@ separate fields.
 
 ## Offline sale reminders
 
-The dashboard and the admin overview both carry an **Offline sale** section next
-to the debt ledger. It is a reminder list, not a sale: an offline sale's money is
-already received as cash or online, so its price is **never** added to Total Sale
-or to any report. Each entry is an item name, a reference price and a date, plus
-a state — *Not added* (still to be entered in the separate daily-sales system) or
-*Added* (someone has entered it there). The same button undoes a mistaken mark,
-and the per-branch counts are derived from the documents rather than stored.
+The **Offline sale** add form sits directly below the *Others* section of the
+daily report form, and the reminder list follows the form on the dashboard. It is
+a reminder list, not a sale: an offline sale's money is already received as cash
+or online, so its price is **never** added to Total Sale or to any report. Each
+entry is an item name, a reference price and a date, plus a state — *Not added*
+(still to be entered in the separate daily-sales system) or *Added* (someone has
+entered it there). The admin overview shows the reminders alone as a review
+queue, with a tick on each row that marks it added (and un-marks a mistaken
+tick). The per-branch counts are derived from the documents rather than stored.
 
 ```
 offlineSales/{id}  branchId, itemName, amountPaise, saleDate,

@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { DebtLedger } from "@/components/debt-ledger";
-import { OfflineSales } from "@/components/offline-sales";
+import { OfflineSaleReminders } from "@/components/offline-sales";
 import { ReportForm } from "@/components/report-form";
 import { ReportsTable } from "@/components/reports-table";
 import { RequireAuth } from "@/components/require-auth";
@@ -173,6 +173,9 @@ function DashboardBody() {
 
         <ReportForm />
 
+        {/* Reminders only: these prices are already in the cash/online totals. */}
+        <OfflineSaleReminders branchId={effectiveBranchId} />
+
         <div className="grid gap-6 lg:grid-cols-2">
           <ReportsTable
             summaries={historySummaries}
@@ -182,9 +185,6 @@ function DashboardBody() {
           />
           <DebtLedger branchId={effectiveBranchId} />
         </div>
-
-        {/* Reminders only: these prices are already in the cash/online totals. */}
-        <OfflineSales branchId={effectiveBranchId} />
       </div>
     </AppShell>
   );

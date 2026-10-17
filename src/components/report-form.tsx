@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MoneyInput } from "@/components/ui/money-input";
+import { OfflineSaleForm } from "@/components/offline-sales";
 import { formatINR, formatDateLabel, todayISO } from "@/lib/format";
 import {
   LINE_CATEGORY_META,
@@ -297,6 +298,9 @@ export function ReportForm() {
             </Card>
           );
         })}
+
+        {/* Reminder only: its price is never part of Total Sale. */}
+        <OfflineSaleForm branchId={branchId} />
       </div>
 
       <div className="space-y-4 lg:sticky lg:top-24">
