@@ -493,6 +493,7 @@ function AdminBody() {
             {/* Advances: held money, advances folded into a later sale, refunds. */}
             <AdvanceLedger
               branchId={branchFilter === "all" ? null : branchFilter}
+              showAddForm
             />
 
             {/* Review queue: tick a reminder once it is entered in the sales system. */}

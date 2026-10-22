@@ -148,7 +148,13 @@ type StoreValue = {
     productName: string;
     amountPaise: number;
     debtDate: string;
+    dueDate?: string | null;
   }) => Promise<ActionResult>;
+  /** Set (or clear) the date a debt is expected to be collected by. */
+  setDebtDueDate: (
+    debtId: string,
+    dueDate: string | null,
+  ) => Promise<ActionResult>;
   addOfflineSale: (input: OfflineSaleInput) => Promise<ActionResult>;
   setOfflineSaleAdded: (
     saleId: string,
@@ -454,6 +460,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
               productName: d.productName,
               amountPaise: d.amountPaise,
               debtDate: d.debtDate,
+              dueDate: d.dueDate || null,
               source: d.source || "report",
               voided: d.voided || false,
               payments: d.payments || [],
@@ -942,12 +949,42 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     [debts],
   );
 
+  const setDebtDueDate = useCallback(
+    async (debtId: string, dueDate: string | null): Promise<ActionResult> => {
+      setError(null);
+      const clean = dueDate?.trim() || "";
+      if (clean && !/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
+        const message = "Pick a valid due date.";
+        setError(message);
+        return { ok: false, error: message };
+      }
+
+      try {
+        await updateDoc(doc(db, "debts", debtId), {
+          dueDate: clean || null,
+        });
+        return { ok: true, error: null };
+      } catch (err) {
+        const message = firestoreErrorMessage(
+          err,
+          OperationType.UPDATE,
+          `debts/${debtId}`,
+          "save this due date",
+        );
+        setError(message);
+        return { ok: false, error: message };
+      }
+    },
+    [],
+  );
+
   const addManualDebt = useCallback(
     async (input: {
       branchId: string;
       productName: string;
       amountPaise: number;
       debtDate: string;
+      dueDate?: string | null;
     }): Promise<ActionResult> => {
       setError(null);
       // Branch Manager cannot add debt for another branch
@@ -958,12 +995,14 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       }
 
       const debtId = makeId("debt");
+      const dueDate = input.dueDate?.trim() || "";
       try {
         await setDoc(doc(db, "debts", debtId), {
           branchId: input.branchId,
           productName: input.productName,
           amountPaise: input.amountPaise,
           debtDate: input.debtDate,
+          ...(dueDate ? { dueDate } : {}),
           source: "manual" as const,
           voided: false,
           payments: [],
@@ -1394,6 +1433,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       updateReport,
       setReportReview,
       recordDebtPayment,
+      setDebtDueDate,
       addManualDebt,
       addAdvance,
       applyAdvance,
@@ -1424,6 +1464,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       recordDebtPayment,
       refundAdvance,
       reports,
+      setDebtDueDate,
       saveReport,
       session,
       setOfflineSaleAdded,

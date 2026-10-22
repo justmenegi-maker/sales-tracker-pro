@@ -143,11 +143,12 @@ service cloud.firestore {
 
     function isValidDebt(data) {
       return data.keys().hasAll(['branchId', 'productName', 'amountPaise', 'debtDate', 'source', 'voided', 'payments', 'createdAt']) &&
-             data.keys().hasOnly(['branchId', 'productName', 'amountPaise', 'debtDate', 'source', 'voided', 'payments', 'createdAt']) &&
+             data.keys().hasOnly(['branchId', 'productName', 'amountPaise', 'debtDate', 'dueDate', 'source', 'voided', 'payments', 'createdAt']) &&
              data.branchId is string && data.branchId.size() <= 64 &&
              data.productName is string && data.productName.size() > 0 && data.productName.size() <= 200 &&
              data.amountPaise is number && data.amountPaise >= 0 &&
              data.debtDate is string && data.debtDate.size() <= 10 &&
+             (!('dueDate' in data) || data.dueDate == null || (data.dueDate is string && data.dueDate.size() <= 10)) &&
              data.source in ['report', 'manual'] &&
              data.voided is bool &&
              data.payments is list && data.payments.size() <= 100 &&
@@ -257,7 +258,7 @@ service cloud.firestore {
       allow update: if isSignedIn() && isValidId(debtId) && isValidDebt(incoming()) && (
         isAdmin() ||
         (existing().branchId == myBranchId() &&
-         incoming().diff(existing()).affectedKeys().hasOnly(['payments']))
+         incoming().diff(existing()).affectedKeys().hasOnly(['payments', 'dueDate']))
       );
       allow delete: if isAdmin() && isValidId(debtId);
     }

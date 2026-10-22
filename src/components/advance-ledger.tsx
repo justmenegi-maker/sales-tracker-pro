@@ -29,15 +29,15 @@ const STATUS_LABEL: Record<AdvanceStatus, string> = {
 type RowAction = { id: string; kind: "apply" | "refund" };
 
 /**
- * Money a customer pays before the item is handed over.
+ * Record money a customer pays before the item is handed over.
  *
- * Kept in its own ledger instead of inside a report: the cash arrived on the
- * advance date, so counting it again on the day of the full sale would double
- * it. The "Add to sale" action records the later date the advance was folded
- * into a filed sale, which is what reconciles the two days.
+ * Sits directly below the Finance section of the daily report form, the same
+ * way the offline-sale form sits under Others: the advance belongs with the
+ * rest of the day's money, but it stays in its own ledger. The received date
+ * can be a past date, so an old advance can be entered later.
  */
-export function AdvanceLedger({ branchId }: { branchId?: string | null }) {
-  const { advances, branches, session, addAdvance, applyAdvance, refundAdvance } = useAppStore();
+export function AdvanceForm({ branchId }: { branchId?: string | null }) {
+  const { branches, session, addAdvance } = useAppStore();
 
   const [customerName, setCustomerName] = useState("");
   const [itemName, setItemName] = useState("");
@@ -46,36 +46,8 @@ export function AdvanceLedger({ branchId }: { branchId?: string | null }) {
   const [pickedBranchId, setPickedBranchId] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const [action, setAction] = useState<RowAction | null>(null);
-  const [actionAmount, setActionAmount] = useState(0);
-  const [actionDate, setActionDate] = useState(todayISO());
-  const [actionNote, setActionNote] = useState("");
-
   const fixedBranchId = branchId ?? session?.branchId ?? null;
   const addBranchId = fixedBranchId || pickedBranchId || branches[0]?.id || "";
-
-  const visible = useMemo(
-    () =>
-      advances
-        .filter((advance) => (branchId ? advance.branchId === branchId : true))
-        .sort((a, b) => (a.advanceDate < b.advanceDate ? 1 : -1)),
-    [advances, branchId],
-  );
-
-  const summary = useMemo(() => summarizeAdvances(visible), [visible]);
-
-  const branchName = (id: string) => branches.find((branch) => branch.id === id)?.name ?? "Branch";
-
-  function openAction(advance: Advance, kind: RowAction["kind"]) {
-    if (action?.id === advance.id && action.kind === kind) {
-      setAction(null);
-      return;
-    }
-    setAction({ id: advance.id, kind });
-    setActionAmount(kind === "refund" ? advanceHeldPaise(advance) : 0);
-    setActionDate(todayISO());
-    setActionNote("");
-  }
 
   async function submitAdvance() {
     if (!addBranchId) {
@@ -100,6 +72,133 @@ export function AdvanceLedger({ branchId }: { branchId?: string | null }) {
     setItemName("");
     setAmountPaise(0);
     setAdvanceDate(todayISO());
+  }
+
+  return (
+    <Card className="border-dashed">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-lg">Advance</CardTitle>
+        <p className="text-xs text-muted-foreground">
+          Money a customer pays before delivery. Use the received date even if
+          you are entering an old advance now — that is the day the cash came
+          in. It stays in the advance ledger and is not added to Total Sale.
+        </p>
+      </CardHeader>
+      <CardContent className="grid gap-3 p-4 pt-0 sm:grid-cols-2 sm:p-6 sm:pt-0 lg:grid-cols-[1.2fr_1.2fr_0.8fr_0.9fr_auto]">
+        <div className="space-y-1">
+          <Label htmlFor="advance-customer">Customer</Label>
+          <Input
+            id="advance-customer"
+            value={customerName}
+            onChange={(event) => setCustomerName(event.target.value)}
+            placeholder="Imran"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="advance-item">Item / appliance</Label>
+          <Input
+            id="advance-item"
+            value={itemName}
+            onChange={(event) => setItemName(event.target.value)}
+            placeholder="Ceiling fan"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="advance-amount">Advance</Label>
+          <MoneyInput
+            id="advance-amount"
+            value={amountPaise}
+            onValueChange={setAmountPaise}
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="advance-date">Received on</Label>
+          <Input
+            id="advance-date"
+            type="date"
+            value={advanceDate}
+            onChange={(event) => setAdvanceDate(event.target.value)}
+          />
+        </div>
+        <div className="flex items-end">
+          <Button
+            className="w-full"
+            disabled={saving}
+            onClick={() => void submitAdvance()}
+          >
+            <Plus className="size-4" />
+            Add
+          </Button>
+        </div>
+
+        {!fixedBranchId && branches.length > 1 ? (
+          <div className="space-y-1 sm:col-span-2 lg:col-span-5">
+            <Label htmlFor="advance-branch">Branch</Label>
+            <select
+              id="advance-branch"
+              value={addBranchId}
+              onChange={(event) => setPickedBranchId(event.target.value)}
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {branches.map((branch) => (
+                <option key={branch.id} value={branch.id}>
+                  {branch.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * The advance ledger: money a customer pays before the item is handed over.
+ *
+ * Kept separate from a report's Total Sale: the cash arrived on the advance
+ * date, so counting it again on the day of the full sale would double it. The
+ * "Add to sale" action records the later date the advance was folded into a
+ * filed sale, which is what reconciles the two days.
+ */
+export function AdvanceLedger({
+  branchId,
+  showAddForm = false,
+}: {
+  branchId?: string | null;
+  /** Admin keeps the entry form here; the dashboard form lives under Finance. */
+  showAddForm?: boolean;
+}) {
+  const { advances, branches, applyAdvance, refundAdvance } = useAppStore();
+
+  const [action, setAction] = useState<RowAction | null>(null);
+  const [actionAmount, setActionAmount] = useState(0);
+  const [actionDate, setActionDate] = useState(todayISO());
+  const [actionNote, setActionNote] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const visible = useMemo(
+    () =>
+      advances
+        .filter((advance) => (branchId ? advance.branchId === branchId : true))
+        .sort((a, b) => (a.advanceDate < b.advanceDate ? 1 : -1)),
+    [advances, branchId],
+  );
+
+  const summary = useMemo(() => summarizeAdvances(visible), [visible]);
+
+  const branchName = (id: string) =>
+    branches.find((branch) => branch.id === id)?.name ?? "Branch";
+
+  function openAction(advance: Advance, kind: RowAction["kind"]) {
+    if (action?.id === advance.id && action.kind === kind) {
+      setAction(null);
+      return;
+    }
+    setAction({ id: advance.id, kind });
+    setActionAmount(kind === "refund" ? advanceHeldPaise(advance) : 0);
+    setActionDate(todayISO());
+    setActionNote("");
   }
 
   async function submitApply(advance: Advance) {
@@ -158,42 +257,52 @@ export function AdvanceLedger({ branchId }: { branchId?: string | null }) {
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-lg">Advance ledger</CardTitle>
-          <p className="text-muted-foreground text-xs">
-            Advance money is not part of Total Sale on its own. When the customer pays the balance,
-            add the advance to that day&apos;s sale here so the two days reconcile.
+          <p className="text-xs text-muted-foreground">
+            Advance money is not part of Total Sale on its own. When the customer
+            pays the balance, add the advance to that day&apos;s sale here so the
+            two days reconcile.
           </p>
         </CardHeader>
         <CardContent className="space-y-2 p-4 pt-0 sm:p-6 sm:pt-0">
           {visible.length === 0 ? (
-            <p className="text-muted-foreground py-6 text-center text-sm">
-              No advances recorded yet. Money taken before delivery goes here.
+            <p className="py-6 text-center text-sm text-muted-foreground">
+              No advances recorded yet. Money taken before delivery is entered
+              below the Finance section of the daily report.
             </p>
           ) : (
             visible.slice(0, 20).map((advance) => {
               const status = deriveAdvanceStatus(advance);
               const refunded = advanceRefundedPaise(advance);
               return (
-                <div key={advance.id} className="bg-background/60 rounded-md border p-3">
+                <div
+                  key={advance.id}
+                  className="rounded-md border bg-background/60 p-3"
+                >
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium">
                         {advance.customerName}{" "}
-                        <span className="text-muted-foreground font-normal">
+                        <span className="font-normal text-muted-foreground">
                           · {advance.itemName}
                         </span>
                       </p>
-                      <p className="text-muted-foreground text-xs">
-                        {branchName(advance.branchId)} · {formatDateLabel(advance.advanceDate)}
+                      <p className="text-xs text-muted-foreground">
+                        {branchName(advance.branchId)} ·{" "}
+                        {formatDateLabel(advance.advanceDate)}
                         {advance.appliedOn
                           ? ` · sale on ${formatDateLabel(advance.appliedOn)}`
                           : ""}
-                        {refunded > 0 ? ` · ${formatINR(refunded)} refunded` : ""}
+                        {refunded > 0
+                          ? ` · ${formatINR(refunded)} refunded`
+                          : ""}
                       </p>
                     </div>
                     <div className="tnum text-right text-sm">
-                      <p className="font-medium">{formatINR(advance.amountPaise)}</p>
+                      <p className="font-medium">
+                        {formatINR(advance.amountPaise)}
+                      </p>
                       {status === "open" && refunded > 0 ? (
-                        <p className="text-muted-foreground text-xs">
+                        <p className="text-xs text-muted-foreground">
                           {formatINR(advanceHeldPaise(advance))} held
                         </p>
                       ) : null}
@@ -244,7 +353,9 @@ export function AdvanceLedger({ branchId }: { branchId?: string | null }) {
                               id={`apply-date-${advance.id}`}
                               type="date"
                               value={actionDate}
-                              onChange={(event) => setActionDate(event.target.value)}
+                              onChange={(event) =>
+                                setActionDate(event.target.value)
+                              }
                             />
                           </div>
                           <Button
@@ -259,7 +370,9 @@ export function AdvanceLedger({ branchId }: { branchId?: string | null }) {
                       ) : (
                         <>
                           <div className="w-36 space-y-1">
-                            <Label htmlFor={`refund-amount-${advance.id}`}>Refund amount</Label>
+                            <Label htmlFor={`refund-amount-${advance.id}`}>
+                              Refund amount
+                            </Label>
                             <MoneyInput
                               id={`refund-amount-${advance.id}`}
                               value={actionAmount}
@@ -267,20 +380,28 @@ export function AdvanceLedger({ branchId }: { branchId?: string | null }) {
                             />
                           </div>
                           <div className="w-40 space-y-1">
-                            <Label htmlFor={`refund-date-${advance.id}`}>Refund date</Label>
+                            <Label htmlFor={`refund-date-${advance.id}`}>
+                              Refund date
+                            </Label>
                             <Input
                               id={`refund-date-${advance.id}`}
                               type="date"
                               value={actionDate}
-                              onChange={(event) => setActionDate(event.target.value)}
+                              onChange={(event) =>
+                                setActionDate(event.target.value)
+                              }
                             />
                           </div>
                           <div className="min-w-0 flex-1 space-y-1">
-                            <Label htmlFor={`refund-note-${advance.id}`}>Reason (optional)</Label>
+                            <Label htmlFor={`refund-note-${advance.id}`}>
+                              Reason (optional)
+                            </Label>
                             <Input
                               id={`refund-note-${advance.id}`}
                               value={actionNote}
-                              onChange={(event) => setActionNote(event.target.value)}
+                              onChange={(event) =>
+                                setActionNote(event.target.value)
+                              }
                               placeholder="Customer cancelled the order"
                             />
                           </div>
@@ -303,72 +424,7 @@ export function AdvanceLedger({ branchId }: { branchId?: string | null }) {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-lg">Add an advance</CardTitle>
-          <p className="text-muted-foreground text-xs">
-            Use the received date even if you are entering an old advance now — that is the day the
-            cash actually came in.
-          </p>
-        </CardHeader>
-        <CardContent className="grid gap-3 p-4 pt-0 sm:grid-cols-2 sm:p-6 sm:pt-0 lg:grid-cols-[1fr_1fr_0.8fr_0.9fr_auto]">
-          <div className="space-y-1">
-            <Label htmlFor="advance-customer">Customer</Label>
-            <Input
-              id="advance-customer"
-              value={customerName}
-              onChange={(event) => setCustomerName(event.target.value)}
-              placeholder="Imran"
-            />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="advance-item">Item / appliance</Label>
-            <Input
-              id="advance-item"
-              value={itemName}
-              onChange={(event) => setItemName(event.target.value)}
-              placeholder="Ceiling fan"
-            />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="advance-amount">Advance</Label>
-            <MoneyInput id="advance-amount" value={amountPaise} onValueChange={setAmountPaise} />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="advance-date">Received on</Label>
-            <Input
-              id="advance-date"
-              type="date"
-              value={advanceDate}
-              onChange={(event) => setAdvanceDate(event.target.value)}
-            />
-          </div>
-          <div className="flex items-end">
-            <Button className="w-full" disabled={saving} onClick={() => void submitAdvance()}>
-              <Plus className="size-4" />
-              Add
-            </Button>
-          </div>
-
-          {!fixedBranchId && branches.length > 1 ? (
-            <div className="space-y-1 sm:col-span-2 lg:col-span-5">
-              <Label htmlFor="advance-branch">Branch</Label>
-              <select
-                id="advance-branch"
-                value={addBranchId}
-                onChange={(event) => setPickedBranchId(event.target.value)}
-                className="border-input bg-background focus-visible:ring-ring flex h-10 w-full rounded-md border px-3 py-2 text-sm focus-visible:ring-2 focus-visible:outline-none"
-              >
-                {branches.map((branch) => (
-                  <option key={branch.id} value={branch.id}>
-                    {branch.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
+      {showAddForm ? <AdvanceForm branchId={branchId} /> : null}
     </div>
   );
 }

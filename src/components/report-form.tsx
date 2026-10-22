@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Plus, Trash2 } from "lucide-react";
+import { AdvanceForm } from "@/components/advance-ledger";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -250,7 +251,8 @@ export function ReportForm() {
             0,
           );
           return (
-            <Card key={meta.key}>
+            <Fragment key={meta.key}>
+            <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
                 <div>
                   <CardTitle className="text-lg">{meta.label}</CardTitle>
@@ -325,6 +327,12 @@ export function ReportForm() {
                 </Button>
               </CardContent>
             </Card>
+
+            {/* Advances are money received today, so they sit right below Finance. */}
+            {meta.key === "finance" ? (
+              <AdvanceForm branchId={branchId} />
+            ) : null}
+            </Fragment>
           );
         })}
 

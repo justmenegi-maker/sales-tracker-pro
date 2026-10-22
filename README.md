@@ -31,7 +31,9 @@ Money a customer pays before the item is handed over lives in its own ledger
 (`advances/{id}`), **not** in Total Sale. The cash already arrived on the advance
 date, so counting it again on the day of the full sale would double it. Each
 entry carries the customer, the item, the amount, the received date and an
-optional note.
+optional note. The entry form sits directly below the **Finance** section of the
+daily report form; the ledger itself follows the report and debt ledgers on the
+dashboard, and the admin portal keeps its own entry form.
 
 - **Add to sale** records the later date the advance was folded into a filed
   sale (`appliedOn`). The report sheet for that day shows how much of its Total
@@ -47,6 +49,14 @@ An admin sees every branch's advances; branch staff see and write only their own
 The rules let a branch update only `appliedOn`, `appliedByName` and `refunds`
 after the entry exists, so the customer, item and amount cannot be rewritten from
 a branch login.
+
+## Debt due dates
+
+Every debt row in the debt ledger carries an editable **Due date** column. A new
+manual debt can be given a due date in the add form, and a debt created from a
+report's debt line gets one later from its row. A debt whose due date has passed
+while money is still owed is labelled **Overdue**; cleared or voided debts never
+are. The due date is optional and stored as `dueDate` (or omitted when blank).
 
 ## Correcting a filed report
 
@@ -119,7 +129,7 @@ the others without a reload.
 | `admins/{uid}` | extra admin grant, read by the security rules |
 | `branches/{id}` | branch name, active flag, optional manager email |
 | `reports/{id}` | one filed day: cash + online amounts, line items, note, review state, admin correction trail |
-| `debts/{id}` | credit sales and their payments |
+| `debts/{id}` | credit sales, their payments and an optional collection due date |
 | `advances/{id}` | advance money held, the sale date it was applied to, and refunds |
 | `offlineSales/{id}` | offline sale reminders: item, reference price, added-to-system state (never counted in Total Sale) |
 | `invites/{email}` | staff invitations; the invite assigns the branch on first sign-in |

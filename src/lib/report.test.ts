@@ -12,6 +12,7 @@ import {
   debtOutstandingPaise,
   debtPaidPaise,
   deriveAdvanceStatus,
+  debtIsOverdue,
   deriveDebtStatus,
   reportFinanceCount,
   reportTotalPaise,
@@ -100,6 +101,7 @@ function debt(overrides: Partial<Debt> = {}): Debt {
     productName: "Ceiling fan",
     amountPaise: 640000,
     debtDate: "2026-10-13",
+    dueDate: null,
     source: "report",
     voided: false,
     payments: [],
@@ -245,6 +247,34 @@ describe("debt derivation", () => {
     });
     expect(deriveDebtStatus(cleared)).toBe("cleared");
     expect(debtOutstandingPaise(cleared)).toBe(0);
+  });
+
+  it("flags a debt as overdue only after its due date has passed", () => {
+    const due = debt({ dueDate: "2026-10-20" });
+
+    expect(debtIsOverdue(due, "2026-10-21")).toBe(true);
+    expect(debtIsOverdue(due, "2026-10-20")).toBe(false);
+    expect(debtIsOverdue(due, "2026-10-19")).toBe(false);
+    expect(debtIsOverdue(debt(), "2026-10-21")).toBe(false);
+    expect(
+      debtIsOverdue(debt({ dueDate: "2026-10-20", voided: true }), "2026-10-21"),
+    ).toBe(false);
+    expect(
+      debtIsOverdue(
+        debt({
+          dueDate: "2026-10-20",
+          payments: [
+            {
+              id: "p1",
+              amountPaise: 640000,
+              paidOn: "2026-10-19",
+              note: null,
+            },
+          ],
+        }),
+        "2026-10-21",
+      ),
+    ).toBe(false);
   });
 
   it("never reports a negative outstanding balance", () => {

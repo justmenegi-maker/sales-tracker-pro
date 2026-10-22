@@ -136,6 +136,8 @@ export type Debt = {
   productName: string;
   amountPaise: number;
   debtDate: string;
+  /** When the customer is expected to pay; null when nobody has set one. */
+  dueDate: string | null;
   source: "report" | "manual";
   voided: boolean;
   payments: DebtPayment[];
@@ -373,6 +375,16 @@ export function debtPaidPaise(debt: Debt): number {
 
 export function debtOutstandingPaise(debt: Debt): number {
   return Math.max(0, debt.amountPaise - debtPaidPaise(debt));
+}
+
+/** Money still owed after its promised due date has passed. */
+export function debtIsOverdue(debt: Debt, today: string): boolean {
+  return Boolean(
+    debt.dueDate &&
+      !debt.voided &&
+      debtOutstandingPaise(debt) > 0 &&
+      debt.dueDate < today,
+  );
 }
 
 /** Derived from the payments, never stored, so ledger and reports cannot disagree. */

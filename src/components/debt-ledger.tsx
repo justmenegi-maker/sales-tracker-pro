@@ -17,6 +17,7 @@ import {
   todayISO,
 } from "@/lib/format";
 import {
+  debtIsOverdue,
   debtOutstandingPaise,
   debtPaidPaise,
   deriveDebtStatus,
@@ -31,13 +32,21 @@ const STATUS_LABEL: Record<ReturnType<typeof deriveDebtStatus>, string> = {
 };
 
 export function DebtLedger({ branchId }: { branchId?: string | null }) {
-  const { debts, branches, recordDebtPayment, addManualDebt, session } =
-    useAppStore();
+  const {
+    debts,
+    branches,
+    recordDebtPayment,
+    setDebtDueDate,
+    addManualDebt,
+    session,
+  } = useAppStore();
   const [openPaymentFor, setOpenPaymentFor] = useState<string | null>(null);
   const [paymentPaise, setPaymentPaise] = useState(0);
   const [productName, setProductName] = useState("");
   const [amountPaise, setAmountPaise] = useState(0);
+  const [dueDate, setDueDate] = useState("");
   const [saving, setSaving] = useState(false);
+  const today = todayISO();
 
   const targetBranchId = branchId ?? session?.branchId ?? branches[0]?.id ?? null;
 
@@ -82,6 +91,21 @@ export function DebtLedger({ branchId }: { branchId?: string | null }) {
     }
   }
 
+  async function saveDueDate(debt: Debt, value: string) {
+    setSaving(true);
+    const result = await setDebtDueDate(debt.id, value || null);
+    setSaving(false);
+    if (!result.ok) {
+      toast.error(result.error ?? "Could not save the due date.");
+      return;
+    }
+    toast.success(
+      value
+        ? `Due date set to ${formatDateLabel(value)}.`
+        : "Due date cleared.",
+    );
+  }
+
   async function submitManualDebt() {
     if (!targetBranchId) {
       toast.error("No branch available.");
@@ -101,12 +125,14 @@ export function DebtLedger({ branchId }: { branchId?: string | null }) {
       productName: productName.trim(),
       amountPaise,
       debtDate: todayISO(),
+      dueDate: dueDate || null,
     });
     setSaving(false);
     if (result.ok) {
       toast.success("Debt added to the ledger.");
       setProductName("");
       setAmountPaise(0);
+      setDueDate("");
     } else {
       toast.error(result.error ?? "Could not add the debt.");
     }
@@ -168,6 +194,29 @@ export function DebtLedger({ branchId }: { branchId?: string | null }) {
                       <p className="text-xs text-muted-foreground">
                         {formatINR(debtPaidPaise(debt))} paid
                       </p>
+                    </div>
+                    <div className="space-y-1">
+                      <Label
+                        htmlFor={`due-${debt.id}`}
+                        className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground"
+                      >
+                        Due date
+                      </Label>
+                      <Input
+                        id={`due-${debt.id}`}
+                        type="date"
+                        value={debt.dueDate ?? ""}
+                        disabled={saving || status === "cleared"}
+                        onChange={(event) =>
+                          void saveDueDate(debt, event.target.value)
+                        }
+                        className="h-8 w-36 text-xs"
+                      />
+                      {debtIsOverdue(debt, today) ? (
+                        <p className="text-[10px] font-medium text-destructive">
+                          Overdue
+                        </p>
+                      ) : null}
                     </div>
                     <Badge
                       variant={
@@ -231,7 +280,7 @@ export function DebtLedger({ branchId }: { branchId?: string | null }) {
         <CardHeader className="pb-3">
           <CardTitle className="text-lg">Add a debt</CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-3 p-4 pt-0 sm:grid-cols-[1.5fr_1fr_auto] sm:p-6 sm:pt-0">
+        <CardContent className="grid gap-3 p-4 pt-0 sm:grid-cols-[1.5fr_1fr_1fr_auto] sm:p-6 sm:pt-0">
           <div className="space-y-1">
             <Label htmlFor="debt-product">Product</Label>
             <Input
@@ -247,6 +296,15 @@ export function DebtLedger({ branchId }: { branchId?: string | null }) {
               id="debt-amount"
               value={amountPaise}
               onValueChange={setAmountPaise}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="debt-due-date">Due date</Label>
+            <Input
+              id="debt-due-date"
+              type="date"
+              value={dueDate}
+              onChange={(event) => setDueDate(event.target.value)}
             />
           </div>
           <div className="flex items-end">
