@@ -13,6 +13,7 @@ import {
   UserPlus,
   Users,
 } from "lucide-react";
+import { AdvanceLedger } from "@/components/advance-ledger";
 import { AppShell } from "@/components/app-shell";
 import { OfflineSaleReminders } from "@/components/offline-sales";
 import { ReportsTable } from "@/components/reports-table";
@@ -480,12 +481,18 @@ function AdminBody() {
               showBranch
               canReview
               canVoid
+              canEdit
               limit={25}
               emptyHint={
                 reviewFilter === "all"
                   ? "No reports filed in this range for the selected branches."
                   : "Nothing matches this review filter in the selected range."
               }
+            />
+
+            {/* Advances: held money, advances folded into a later sale, refunds. */}
+            <AdvanceLedger
+              branchId={branchFilter === "all" ? null : branchFilter}
             />
 
             {/* Review queue: tick a reminder once it is entered in the sales system. */}

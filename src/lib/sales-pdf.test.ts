@@ -20,10 +20,13 @@ function report(overrides: Partial<DailyReport> = {}): DailyReport {
     status: "active",
     voidReason: null,
     createdAt: "2026-10-01T14:20:00.000Z",
+    note: null,
     reviewStatus: "pending",
     reviewNote: null,
     reviewedByName: null,
     reviewedAt: null,
+    editedByName: null,
+    editedAt: null,
     ...overrides,
   };
 }

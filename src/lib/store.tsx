@@ -46,14 +46,24 @@ import {
   onAuthStateChanged,
   type User,
 } from "./firebase";
-import { buildBranchDocument, makeId, resolveFilingBranch } from "./report";
+import {
+  advanceApplyError,
+  advanceRefundError,
+  buildBranchDocument,
+  buildReportEditPayload,
+  makeId,
+  resolveFilingBranch,
+} from "./report";
 import type {
+  Advance,
+  AdvanceInput,
   Branch,
   DailyReport,
   Debt,
   LineCategory,
   OfflineSale,
   OfflineSaleInput,
+  ReportEditInput,
   ReviewStatus,
   SaveReportInput,
   StaffInvite,
@@ -99,6 +109,7 @@ type StoreValue = {
   branches: Branch[];
   reports: DailyReport[];
   debts: Debt[];
+  advances: Advance[];
   offlineSales: OfflineSale[];
   invites: StaffInvite[];
   error: string | null;
@@ -108,6 +119,11 @@ type StoreValue = {
   signOut: () => Promise<void>;
   saveReport: (input: SaveReportInput) => Promise<FileReportResult>;
   voidReport: (reportId: string, reason: string) => Promise<ActionResult>;
+  /** Admin correction of a filed report (amounts, rows, date or note). */
+  updateReport: (
+    reportId: string,
+    input: ReportEditInput,
+  ) => Promise<ActionResult>;
   setReportReview: (
     reportId: string,
     status: ReviewStatus,
@@ -118,6 +134,15 @@ type StoreValue = {
     amountPaise: number,
     note: string,
   ) => Promise<ActionResult>;
+  addAdvance: (input: AdvanceInput) => Promise<ActionResult>;
+  /** Fold a held advance into the sale filed on `appliedOn`. */
+  applyAdvance: (advanceId: string, appliedOn: string) => Promise<ActionResult>;
+  refundAdvance: (input: {
+    advanceId: string;
+    amountPaise: number;
+    refundedOn: string;
+    note?: string | null;
+  }) => Promise<ActionResult>;
   addManualDebt: (input: {
     branchId: string;
     productName: string;
@@ -167,6 +192,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [reports, setReports] = useState<DailyReport[]>([]);
   const [debts, setDebts] = useState<Debt[]>([]);
+  const [advances, setAdvances] = useState<Advance[]>([]);
   const [offlineSales, setOfflineSales] = useState<OfflineSale[]>([]);
   const [invites, setInvites] = useState<StaffInvite[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -386,10 +412,13 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
               lines: d.lines || [],
               status: d.status || "active",
               voidReason: d.voidReason || null,
+              note: d.note || null,
               reviewStatus: d.reviewStatus || "pending",
               reviewNote: d.reviewNote || null,
               reviewedByName: d.reviewedByName || null,
               reviewedAt: d.reviewedAt || null,
+              editedByName: d.editedByName || null,
+              editedAt: d.editedAt || null,
               createdAt: d.createdAt,
             };
           });
@@ -435,6 +464,53 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         (error) => {
           setError(
             firestoreErrorMessage(error, OperationType.LIST, "debts", "load the debt ledger"),
+          );
+        },
+      );
+    }
+
+    // Advances - same branch scoping as debts. An advance is money received
+    // before the item is handed over, so it is tracked in its own ledger and
+    // never folded into Total Sale automatically.
+    const advancesQuery =
+      session.role === "admin"
+        ? collection(db, "advances")
+        : session.branchId
+          ? query(collection(db, "advances"), where("branchId", "==", session.branchId))
+          : null;
+
+    let unsubAdvances = () => {};
+    if (advancesQuery) {
+      unsubAdvances = onSnapshot(
+        advancesQuery,
+        (snapshot) => {
+          if (!mounted.current) return;
+          const list: Advance[] = snapshot.docs.map((docSnap) => {
+            const d = docSnap.data();
+            return {
+              id: docSnap.id,
+              branchId: d.branchId,
+              customerName: d.customerName,
+              itemName: d.itemName,
+              amountPaise: d.amountPaise,
+              advanceDate: d.advanceDate,
+              appliedOn: d.appliedOn || null,
+              appliedByName: d.appliedByName || null,
+              refunds: d.refunds || [],
+              note: d.note || null,
+              createdAt: d.createdAt,
+            };
+          });
+          setAdvances(list);
+        },
+        (error) => {
+          setError(
+            firestoreErrorMessage(
+              error,
+              OperationType.LIST,
+              "advances",
+              "load the advance ledger",
+            ),
           );
         },
       );
@@ -517,6 +593,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       unsubBranches();
       unsubReports();
       unsubDebts();
+      unsubAdvances();
       unsubOfflineSales();
       unsubInvites();
     };
@@ -656,6 +733,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         onlinePaise: input.onlinePaise,
         lines: linesWithIds,
         status: "active" as const,
+        note: input.note?.trim() ? input.note.trim() : null,
         reviewStatus: "pending" as const,
         createdAt: new Date().toISOString(),
       };
@@ -737,6 +815,45 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           OperationType.UPDATE,
           `reports/${reportId}`,
           "void this report",
+        );
+        setError(message);
+        return { ok: false, error: message };
+      }
+    },
+    [session],
+  );
+
+  const updateReport = useCallback(
+    async (
+      reportId: string,
+      input: ReportEditInput,
+    ): Promise<ActionResult> => {
+      setError(null);
+      if (session?.role !== "admin") {
+        const message = "Only admins can edit a filed report.";
+        setError(message);
+        return { ok: false, error: message };
+      }
+
+      const { data, error } = buildReportEditPayload(
+        input,
+        session.displayName || "Admin",
+        new Date().toISOString(),
+      );
+      if (error) {
+        setError(error);
+        return { ok: false, error };
+      }
+
+      try {
+        await updateDoc(doc(db, "reports", reportId), data);
+        return { ok: true, error: null };
+      } catch (err) {
+        const message = firestoreErrorMessage(
+          err,
+          OperationType.UPDATE,
+          `reports/${reportId}`,
+          "save this correction",
         );
         setError(message);
         return { ok: false, error: message };
@@ -865,6 +982,156 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       }
     },
     [session],
+  );
+
+  const addAdvance = useCallback(
+    async (input: AdvanceInput): Promise<ActionResult> => {
+      setError(null);
+      if (session?.role === "branch" && session.branchId && input.branchId !== session.branchId) {
+        const message = "You can only record advances for your assigned branch.";
+        setError(message);
+        return { ok: false, error: message };
+      }
+
+      const customerName = input.customerName.trim();
+      const itemName = input.itemName.trim();
+      if (!customerName) {
+        const message = "Add the customer name.";
+        setError(message);
+        return { ok: false, error: message };
+      }
+      if (!itemName) {
+        const message = "Add the item or appliance.";
+        setError(message);
+        return { ok: false, error: message };
+      }
+      if (!Number.isInteger(input.amountPaise) || input.amountPaise <= 0) {
+        const message = "The advance must be more than zero.";
+        setError(message);
+        return { ok: false, error: message };
+      }
+      if (!input.advanceDate) {
+        const message = "Pick the date the advance was received.";
+        setError(message);
+        return { ok: false, error: message };
+      }
+
+      const advanceId = makeId("advance");
+      try {
+        await setDoc(doc(db, "advances", advanceId), {
+          branchId: input.branchId,
+          customerName,
+          itemName,
+          amountPaise: input.amountPaise,
+          advanceDate: input.advanceDate,
+          appliedOn: null,
+          appliedByName: null,
+          refunds: [],
+          note: input.note?.trim() ? input.note.trim() : null,
+          createdAt: new Date().toISOString(),
+        });
+        return { ok: true, error: null };
+      } catch (err) {
+        const message = firestoreErrorMessage(
+          err,
+          OperationType.CREATE,
+          `advances/${advanceId}`,
+          "add this advance",
+        );
+        setError(message);
+        return { ok: false, error: message };
+      }
+    },
+    [session],
+  );
+
+  const applyAdvance = useCallback(
+    async (advanceId: string, appliedOn: string): Promise<ActionResult> => {
+      setError(null);
+      const current = advances.find((advance) => advance.id === advanceId);
+      if (!current) {
+        const message = "That advance is no longer in the ledger.";
+        setError(message);
+        return { ok: false, error: message };
+      }
+
+      const blocked = advanceApplyError(current, appliedOn);
+      if (blocked) {
+        setError(blocked);
+        return { ok: false, error: blocked };
+      }
+
+      try {
+        await updateDoc(doc(db, "advances", advanceId), {
+          appliedOn,
+          appliedByName: session?.displayName || "Staff",
+        });
+        return { ok: true, error: null };
+      } catch (err) {
+        const message = firestoreErrorMessage(
+          err,
+          OperationType.UPDATE,
+          `advances/${advanceId}`,
+          "add this advance to a sale",
+        );
+        setError(message);
+        return { ok: false, error: message };
+      }
+    },
+    [advances, session],
+  );
+
+  const refundAdvance = useCallback(
+    async (input: {
+      advanceId: string;
+      amountPaise: number;
+      refundedOn: string;
+      note?: string | null;
+    }): Promise<ActionResult> => {
+      setError(null);
+      const current = advances.find((advance) => advance.id === input.advanceId);
+      if (!current) {
+        const message = "That advance is no longer in the ledger.";
+        setError(message);
+        return { ok: false, error: message };
+      }
+
+      const blocked = advanceRefundError(current, input.amountPaise);
+      if (blocked) {
+        setError(blocked);
+        return { ok: false, error: blocked };
+      }
+      if (!input.refundedOn) {
+        const message = "Pick the refund date.";
+        setError(message);
+        return { ok: false, error: message };
+      }
+
+      try {
+        await updateDoc(doc(db, "advances", input.advanceId), {
+          refunds: [
+            ...current.refunds,
+            {
+              id: makeId("refund"),
+              amountPaise: input.amountPaise,
+              refundedOn: input.refundedOn,
+              note: input.note?.trim() ? input.note.trim() : null,
+            },
+          ],
+        });
+        return { ok: true, error: null };
+      } catch (err) {
+        const message = firestoreErrorMessage(
+          err,
+          OperationType.UPDATE,
+          `advances/${input.advanceId}`,
+          "refund this advance",
+        );
+        setError(message);
+        return { ok: false, error: message };
+      }
+    },
+    [advances],
   );
 
   const addOfflineSale = useCallback(
@@ -1114,6 +1381,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       branches,
       reports,
       debts,
+      advances,
       offlineSales,
       invites,
       error,
@@ -1123,9 +1391,13 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       signOut,
       saveReport,
       voidReport,
+      updateReport,
       setReportReview,
       recordDebtPayment,
       addManualDebt,
+      addAdvance,
+      applyAdvance,
+      refundAdvance,
       addOfflineSale,
       setOfflineSaleAdded,
       addBranch,
@@ -1134,9 +1406,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       deleteInvite,
     }),
     [
+      addAdvance,
       addBranch,
       addManualDebt,
       addOfflineSale,
+      advances,
+      applyAdvance,
       branches,
       debts,
       deleteBranch,
@@ -1147,6 +1422,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       offlineSales,
       ready,
       recordDebtPayment,
+      refundAdvance,
       reports,
       saveReport,
       session,
@@ -1155,6 +1431,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       signIn,
       signInWithGoogle,
       signOut,
+      updateReport,
       voidReport,
     ],
   );

@@ -41,6 +41,7 @@ export function ReportsTable({
   showBranch = false,
   canReview = false,
   canVoid = false,
+  canEdit = false,
   emptyHint = "No reports filed yet.",
   limit = 10,
   detailed = false,
@@ -51,6 +52,8 @@ export function ReportsTable({
   showBranch?: boolean;
   canReview?: boolean;
   canVoid?: boolean;
+  /** Admin: open a filed report in the correction editor. */
+  canEdit?: boolean;
   emptyHint?: string;
   limit?: number;
   /** Admin review rows: show the section mix and the review trail inline. */
@@ -137,6 +140,8 @@ export function ReportsTable({
                             {showBranch ? `${report.branchName} · ` : ""}
                             {report.submittedByName}
                             {financeCount > 0 ? ` · ${financeCount} finance` : ""}
+                            {report.editedByName ? ` · edited by ${report.editedByName}` : ""}
+                            {report.note ? ` · ${report.note}` : ""}
                             {!detailed && reviewed && report.reviewNote
                               ? ` · ${report.reviewNote}`
                               : ""}
@@ -319,6 +324,7 @@ export function ReportsTable({
           summary={openSummary}
           context={contextSummaries}
           initialFlag={flagFirst}
+          canEdit={canEdit}
           onClose={() => {
             setOpenId(null);
             setFlagFirst(false);

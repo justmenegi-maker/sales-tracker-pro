@@ -14,8 +14,48 @@ and the database can never disagree.
 | --- | --- | --- |
 | `/` | public | Landing page; signed-in staff are sent straight to their workspace |
 | `/auth/login` | public | Firebase sign-in — Google (Gmail) or email/password |
-| `/dashboard` | branch + admin | File the day's report, history, debt ledger, offline sale reminders |
-| `/admin` | admin only | Cross-branch totals, trend, missing days, open and review any report, void a report, manage branches and staff invites |
+| `/dashboard` | branch + admin | File the day's report, history, debt and advance ledgers, offline sale reminders |
+| `/admin` | admin only | Cross-branch totals, trend, missing days, open, review, correct or void any report, manage branches and staff invites, advance ledger |
+
+## Description box
+
+The daily report form has an optional **Description / note** box (1,000
+characters). It is stored as `note` on the report, shown in the report row, in
+the report sheet as *Description / note*, and listed in the PDF export as a
+**Daily notes** section, so the reason behind a day never lives only in someone's
+head.
+
+## Advance ledger
+
+Money a customer pays before the item is handed over lives in its own ledger
+(`advances/{id}`), **not** in Total Sale. The cash already arrived on the advance
+date, so counting it again on the day of the full sale would double it. Each
+entry carries the customer, the item, the amount, the received date and an
+optional note.
+
+- **Add to sale** records the later date the advance was folded into a filed
+  sale (`appliedOn`). The report sheet for that day shows how much of its Total
+  Sale came from advances received earlier, which is what reconciles the two
+  days.
+- **Refund** appends a refund row (`refunds[]`) with amount, date and reason;
+  partial refunds leave the rest held, and the full amount can never be refunded
+  twice.
+- Status is derived, never stored: `open` while held, `applied` after it is
+  added to a sale, `refunded` once it is returned in full.
+
+An admin sees every branch's advances; branch staff see and write only their own.
+The rules let a branch update only `appliedOn`, `appliedByName` and `refunds`
+after the entry exists, so the customer, item and amount cannot be rewritten from
+a branch login.
+
+## Correcting a filed report
+
+Branch staff still cannot edit a filed report. An admin opens the report from the
+review queue and presses **Edit**: date, cash, online, line items and the note
+become editable, and Saving stamps `editedByName` / `editedAt` on the report.
+The totals are recomputed before the save and non-numeric or negative amounts are
+refused. Debt rows in the debt ledger are separate documents, so a correction to
+a report's debt line does not rewrite its ledger entry.
 
 ## Reviewing a day
 
@@ -78,8 +118,9 @@ the others without a reload.
 | `users/{uid}` | profile, role (`admin` / `branch`) and the assigned `branchId` |
 | `admins/{uid}` | extra admin grant, read by the security rules |
 | `branches/{id}` | branch name, active flag, optional manager email |
-| `reports/{id}` | one filed day: cash + online amounts, line items, review state |
+| `reports/{id}` | one filed day: cash + online amounts, line items, note, review state, admin correction trail |
 | `debts/{id}` | credit sales and their payments |
+| `advances/{id}` | advance money held, the sale date it was applied to, and refunds |
 | `offlineSales/{id}` | offline sale reminders: item, reference price, added-to-system state (never counted in Total Sale) |
 | `invites/{email}` | staff invitations; the invite assigns the branch on first sign-in |
 

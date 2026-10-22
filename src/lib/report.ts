@@ -68,10 +68,15 @@ export type DailyReport = {
   status: "active" | "voided";
   voidReason: string | null;
   createdAt: string;
+  /** Free-text note left by the person filing the day. */
+  note: string | null;
   reviewStatus: ReviewStatus;
   reviewNote: string | null;
   reviewedByName: string | null;
   reviewedAt: string | null;
+  /** Set when an admin corrects a filed report. */
+  editedByName: string | null;
+  editedAt: string | null;
 };
 
 export type DebtPayment = {
@@ -82,6 +87,48 @@ export type DebtPayment = {
 };
 
 export type DebtStatus = "open" | "partial" | "cleared";
+
+/** Money returned to a customer against an advance. */
+export type AdvanceRefund = {
+  id: string;
+  amountPaise: number;
+  refundedOn: string;
+  note: string | null;
+};
+
+/**
+ * An advance is money a customer pays before the item is handed over.
+ *
+ * It is tracked separately from a report's Total Sale: the cash arrived on the
+ * advance date, so counting it again on the day of the full sale would double
+ * it. `appliedOn` records the later date the advance was folded into a filed
+ * sale, which is what lets the owner reconcile one day against another.
+ */
+export type Advance = {
+  id: string;
+  branchId: string;
+  customerName: string;
+  itemName: string;
+  amountPaise: number;
+  advanceDate: string;
+  /** The sale date this advance was counted on; null while still held. */
+  appliedOn: string | null;
+  appliedByName: string | null;
+  refunds: AdvanceRefund[];
+  note: string | null;
+  createdAt: string;
+};
+
+export type AdvanceStatus = "open" | "applied" | "refunded";
+
+export type AdvanceInput = {
+  branchId: string;
+  customerName: string;
+  itemName: string;
+  amountPaise: number;
+  advanceDate: string;
+  note?: string | null;
+};
 
 export type Debt = {
   id: string;
@@ -126,6 +173,16 @@ export type SaveReportInput = {
   cashPaise: number;
   onlinePaise: number;
   lines: Array<Pick<ReportLine, "category" | "label" | "amountPaise">>;
+  note?: string | null;
+};
+
+/** What an admin changes when correcting a filed report. */
+export type ReportEditInput = {
+  reportDate: string;
+  cashPaise: number;
+  onlinePaise: number;
+  lines: Array<Pick<ReportLine, "category" | "label" | "amountPaise">>;
+  note: string | null;
 };
 
 /** The eight sections shown on the entry form, in cash-book order. */
@@ -189,6 +246,125 @@ export function reportTotalPaise(report: DailyReport): number {
 
 export function reportFinanceCount(report: DailyReport): number {
   return report.lines.filter((line) => line.category === "finance").length;
+}
+
+export function advanceRefundedPaise(advance: Advance): number {
+  return advance.refunds.reduce((sum, refund) => sum + refund.amountPaise, 0);
+}
+
+/** Advance money still held: everything not yet applied to a sale or refunded. */
+export function advanceHeldPaise(advance: Advance): number {
+  if (advance.appliedOn) return 0;
+  return Math.max(0, advance.amountPaise - advanceRefundedPaise(advance));
+}
+
+/**
+ * The part of an advance that was folded into a sale: the amount minus any
+ * refund given before it was applied. Zero while it is still held.
+ */
+export function advanceAppliedPaise(advance: Advance): number {
+  if (!advance.appliedOn) return 0;
+  return Math.max(0, advance.amountPaise - advanceRefundedPaise(advance));
+}
+
+/** Derived, so the ledger cannot disagree with its own refund rows. */
+export function deriveAdvanceStatus(advance: Advance): AdvanceStatus {
+  if (advanceRefundedPaise(advance) >= advance.amountPaise) return "refunded";
+  if (advance.appliedOn) return "applied";
+  return "open";
+}
+
+export function summarizeAdvances(advances: Advance[]): {
+  heldPaise: number;
+  appliedPaise: number;
+  refundedPaise: number;
+  openCount: number;
+  appliedCount: number;
+  refundedCount: number;
+} {
+  const summary = {
+    heldPaise: 0,
+    appliedPaise: 0,
+    refundedPaise: 0,
+    openCount: 0,
+    appliedCount: 0,
+    refundedCount: 0,
+  };
+
+  for (const advance of advances) {
+    const status = deriveAdvanceStatus(advance);
+    summary.refundedPaise += advanceRefundedPaise(advance);
+    if (status === "refunded") {
+      summary.refundedCount += 1;
+      continue;
+    }
+    if (status === "applied") {
+      summary.appliedCount += 1;
+      summary.appliedPaise += advanceAppliedPaise(advance);
+      continue;
+    }
+    summary.openCount += 1;
+    summary.heldPaise += advanceHeldPaise(advance);
+  }
+
+  return summary;
+}
+
+/** Why an advance cannot be added to a sale, or null when it can. */
+export function advanceApplyError(
+  advance: Advance,
+  appliedOn: string,
+): string | null {
+  if (deriveAdvanceStatus(advance) !== "open") {
+    return "Only an advance that is still held can be added to a sale.";
+  }
+  if (!appliedOn) return "Pick the sale date this advance belongs to.";
+  return null;
+}
+
+/** Why a refund cannot be recorded, or null when it can. */
+export function advanceRefundError(
+  advance: Advance,
+  amountPaise: number,
+): string | null {
+  const status = deriveAdvanceStatus(advance);
+  if (status === "applied") {
+    return "This advance is already counted in a sale, so it cannot be refunded here.";
+  }
+  if (status === "refunded") {
+    return "This advance has already been refunded in full.";
+  }
+  if (!Number.isInteger(amountPaise) || amountPaise <= 0) {
+    return "Enter the amount being refunded.";
+  }
+  if (amountPaise > advanceHeldPaise(advance)) {
+    return "The refund cannot be more than the advance still held.";
+  }
+  return null;
+}
+
+/**
+ * Advances adjusted into a sale on `date`, so the report view can show the
+ * amount that was received earlier but belongs to this day's sale.
+ */
+export function advancesAppliedOn(
+  advances: Advance[],
+  branchId: string,
+  date: string,
+): { count: number; totalPaise: number } {
+  const applied = advances.filter(
+    (advance) =>
+      advance.branchId === branchId &&
+      advance.appliedOn === date &&
+      deriveAdvanceStatus(advance) === "applied",
+  );
+  return {
+    count: applied.length,
+    totalPaise: applied.reduce(
+      (sum, advance) => sum + advanceAppliedPaise(advance),
+      0,
+    ),
+  };
 }
 
 export function debtPaidPaise(debt: Debt): number {
@@ -291,6 +467,59 @@ export function branchIdFromName(name: string): string {
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-|-$/g, "") || makeId("branch")
   );
+}
+
+/**
+ * Firestore payload for an admin correction of a filed report.
+ *
+ * A correction rebuilds the row set, so every line gets a fresh id and zeroed
+ * rows are dropped. Amounts are rejected rather than silently coerced: a
+ * correction that stored a negative or fractional paise value would break every
+ * total derived from it.
+ */
+export function buildReportEditPayload(
+  input: ReportEditInput,
+  editorName: string,
+  editedAt: string,
+): { data: Record<string, unknown>; error: string | null } {
+  const amounts = [
+    input.cashPaise,
+    input.onlinePaise,
+    ...input.lines.map((line) => line.amountPaise),
+  ];
+  if (
+    amounts.some(
+      (amount) => !Number.isInteger(amount) || amount < 0,
+    )
+  ) {
+    return { data: {}, error: "Every amount must be a non-negative number of rupees." };
+  }
+
+  if (!input.reportDate) {
+    return { data: {}, error: "Pick the report date." };
+  }
+
+  const lines: ReportLine[] = input.lines
+    .filter((line) => line.amountPaise > 0)
+    .map((line) => ({
+      id: makeId("line"),
+      category: line.category,
+      label: line.label.trim() || "Adjusted entry",
+      amountPaise: line.amountPaise,
+    }));
+
+  return {
+    data: {
+      reportDate: input.reportDate,
+      cashPaise: input.cashPaise,
+      onlinePaise: input.onlinePaise,
+      lines,
+      note: input.note?.trim() ? input.note.trim() : null,
+      editedByName: editorName,
+      editedAt,
+    },
+    error: null,
+  };
 }
 
 /**

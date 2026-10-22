@@ -648,6 +648,51 @@ function drawDailyLedger(state: DocState, range: RangeSales) {
   );
 }
 
+/** Notes the branch left with a filed report, shown next to the day's sale. */
+function drawDailyNotes(state: DocState, range: RangeSales) {
+  const withNotes = range.reports.filter(
+    (summary) => (summary.report.note ?? "").trim().length > 0,
+  );
+  if (withNotes.length === 0) return;
+
+  sectionHeading(
+    state,
+    "Daily notes",
+    `${withNotes.length} day${withNotes.length === 1 ? "" : "s"} with a note`,
+  );
+
+  for (const summary of withNotes) {
+    const note = (summary.report.note ?? "").trim();
+    const lines = state.doc.splitTextToSize(note, CONTENT_WIDTH - 8) as string[];
+    const height = 9 + lines.length * 3.6;
+    ensureSpace(state, height + 3, "Sales performance report");
+    panel(state.doc, MARGIN, state.y, CONTENT_WIDTH, height, PAPER);
+
+    text(
+      state.doc,
+      `${formatDateLabel(summary.report.reportDate)} · ${summary.report.branchName}`,
+      MARGIN + 4,
+      state.y + 5,
+      { size: 7.6, style: "bold", color: TEXT },
+    );
+    text(
+      state.doc,
+      moneyExact(summary.totalPaise),
+      PAGE_WIDTH - MARGIN - 4,
+      state.y + 5,
+      { size: 7.6, style: "bold", color: TEXT, align: "right" },
+    );
+    text(state.doc, note, MARGIN + 4, state.y + 9, {
+      size: 7.4,
+      color: TEXT,
+      maxWidth: CONTENT_WIDTH - 8,
+    });
+    state.y += height + 2.5;
+  }
+
+  state.y += 3;
+}
+
 function drawReviewSummary(state: DocState, range: RangeSales) {
   const counts = { pending: 0, ok: 0, concern: 0 };
   for (const summary of range.reports) counts[summary.report.reviewStatus] += 1;
@@ -802,6 +847,7 @@ export async function buildSalesPdf(
   drawSectionMix(state, input.range);
   drawBranchTable(state, input.range);
   drawDailyLedger(state, input.range);
+  drawDailyNotes(state, input.range);
 
   ensureSpace(state, 34, runningTitle);
   drawReviewSummary(state, input.range);

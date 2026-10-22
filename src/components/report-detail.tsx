@@ -2,11 +2,20 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { ArrowDownRight, ArrowUpRight, Check, Flag, Minus, X } from "lucide-react";
+import {
+  ArrowDownRight,
+  ArrowUpRight,
+  Check,
+  Flag,
+  Minus,
+  PencilLine,
+  X,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ReportEditForm } from "@/components/report-edit-form";
 import {
   formatDateLabel,
   formatINR,
@@ -16,6 +25,7 @@ import {
 import {
   LINE_CATEGORY_META,
   SECTION_META,
+  advancesAppliedOn,
   reviewLabel,
 } from "@/lib/report";
 import type { ReportSummary } from "@/lib/report";
@@ -72,6 +82,7 @@ export function ReportDetail({
   summary,
   context,
   initialFlag = false,
+  canEdit = false,
   onClose,
 }: {
   summary: ReportSummary;
@@ -79,17 +90,25 @@ export function ReportDetail({
   context?: ReportSummary[];
   /** Open straight into the concern note, e.g. from the table's flag action. */
   initialFlag?: boolean;
+  /** Admins can correct a filed report instead of voiding the whole day. */
+  canEdit?: boolean;
   onClose: () => void;
 }) {
-  const { session, setReportReview } = useAppStore();
+  const { session, setReportReview, advances } = useAppStore();
   const { report, sections, totalPaise } = summary;
   const canReview = session?.role === "admin" && report.status === "active";
 
   const [note, setNote] = useState(report.reviewNote ?? "");
+  const [editing, setEditing] = useState(false);
   const [flagging, setFlagging] = useState(
     initialFlag || report.reviewStatus === "concern",
   );
   const [saving, setSaving] = useState(false);
+
+  const dayAdvances = useMemo(
+    () => advancesAppliedOn(advances, report.branchId, report.reportDate),
+    [advances, report.branchId, report.reportDate],
+  );
 
   const stats = useMemo(
     () => (context ? reportContext(context, summary) : null),
@@ -158,6 +177,9 @@ export function ReportDetail({
             </p>
             <p className="truncate text-xs text-muted-foreground">
               {report.branchName} · filed by {report.submittedByName}
+              {report.editedAt
+                ? ` · edited by ${report.editedByName ?? "admin"}`
+                : ""}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -167,6 +189,16 @@ export function ReportDetail({
             <Badge variant={REVIEW_BADGE[report.reviewStatus]}>
               {reviewLabel(report.reviewStatus)}
             </Badge>
+            {canEdit && session?.role === "admin" ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setEditing((current) => !current)}
+              >
+                <PencilLine className="size-4" />
+                {editing ? "Close edit" : "Edit"}
+              </Button>
+            ) : null}
             <Button
               variant="ghost"
               size="icon"
@@ -178,7 +210,15 @@ export function ReportDetail({
           </div>
         </header>
 
-        <div className="space-y-5 px-5 py-4">
+        {editing ? (
+          <div className="px-5 py-4">
+            <ReportEditForm
+              summary={summary}
+              onCancel={() => setEditing(false)}
+            />
+          </div>
+        ) : (
+          <div className="space-y-5 px-5 py-4">
           <div className="rounded-lg border border-primary/30 bg-primary/5 p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
@@ -213,12 +253,29 @@ export function ReportDetail({
               Cash + Online + Finance + Debt + Exchange + Cheque + Store use +
               Others
             </p>
+            {dayAdvances.count > 0 ? (
+              <p className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-900">
+                Includes {formatINR(dayAdvances.totalPaise)} of advance money
+                from {dayAdvances.count} customer
+                {dayAdvances.count === 1 ? "" : "s"} — received earlier and
+                added to this day&apos;s sale in the advance ledger.
+              </p>
+            ) : null}
           </div>
 
           {report.status === "voided" && report.voidReason ? (
             <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
               Voided: {report.voidReason}
             </p>
+          ) : null}
+
+          {report.note ? (
+            <section className="rounded-lg border bg-accent/30 p-3">
+              <h3 className="text-sm font-semibold">Description / note</h3>
+              <p className="mt-1 whitespace-pre-line text-sm text-muted-foreground">
+                {report.note}
+              </p>
+            </section>
           ) : null}
 
           {stats && stats.sampleDays > 0 ? (
@@ -450,7 +507,8 @@ export function ReportDetail({
               </p>
             )}
           </section>
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );

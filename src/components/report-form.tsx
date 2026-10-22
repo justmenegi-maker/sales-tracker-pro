@@ -43,6 +43,7 @@ export function ReportForm() {
   const branchId = selectedBranchId ?? (session?.branchId || branches[0]?.id || "");
   const [cashPaise, setCashPaise] = useState(0);
   const [onlinePaise, setOnlinePaise] = useState(0);
+  const [note, setNote] = useState("");
   const [lines, setLines] = useState<LineDraft[]>(initialLines);
   const [saving, setSaving] = useState(false);
 
@@ -87,6 +88,7 @@ export function ReportForm() {
   function reset() {
     setCashPaise(0);
     setOnlinePaise(0);
+    setNote("");
     setLines(initialLines());
   }
 
@@ -109,6 +111,7 @@ export function ReportForm() {
       reportDate,
       cashPaise,
       onlinePaise,
+      note: note.trim() ? note.trim() : null,
       lines: lines
         .filter((line) => line.amountPaise > 0 || line.label.trim().length > 0)
         .filter((line) => line.amountPaise > 0)
@@ -209,6 +212,32 @@ export function ReportForm() {
                 onValueChange={setOnlinePaise}
               />
             </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg">Description / note</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Optional. Anything worth remembering about this day — a repair,
+              a customer request, a missing bill. It stays attached to the
+              daily report.
+            </p>
+          </CardHeader>
+          <CardContent className="p-4 pt-0 sm:p-6 sm:pt-0">
+            <textarea
+              id="report-note"
+              aria-label="Description or note for this day"
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              rows={3}
+              maxLength={1000}
+              placeholder="e.g. Power cut for two hours; one fan delivered late"
+              className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            />
+            <p className="mt-1 text-right text-[11px] text-muted-foreground">
+              {note.length}/1000
+            </p>
           </CardContent>
         </Card>
 
@@ -337,7 +366,8 @@ export function ReportForm() {
             </Button>
             <p className="text-xs text-muted-foreground">
               Submitted reports are locked: branch staff cannot edit them after
-              filing. An admin can void a report if something was entered wrong.
+              filing. An admin can correct the numbers or void the report if
+              something was entered wrong.
             </p>
           </CardContent>
         </Card>

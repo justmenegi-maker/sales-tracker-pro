@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { AdvanceLedger } from "@/components/advance-ledger";
 import { AppShell } from "@/components/app-shell";
 import { DebtLedger } from "@/components/debt-ledger";
 import { OfflineSaleReminders } from "@/components/offline-sales";
@@ -185,6 +186,9 @@ function DashboardBody() {
           />
           <DebtLedger branchId={effectiveBranchId} />
         </div>
+
+        {/* Money taken before delivery: outside Total Sale until it is applied. */}
+        <AdvanceLedger branchId={effectiveBranchId} />
       </div>
     </AppShell>
   );

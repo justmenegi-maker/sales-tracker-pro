@@ -1,9 +1,17 @@
 import { describe, it, expect } from "vitest";
 import {
+  advanceAppliedPaise,
+  advanceApplyError,
+  advanceHeldPaise,
+  advanceRefundError,
+  advanceRefundedPaise,
+  advancesAppliedOn,
   branchIdFromName,
   buildBranchDocument,
+  buildReportEditPayload,
   debtOutstandingPaise,
   debtPaidPaise,
+  deriveAdvanceStatus,
   deriveDebtStatus,
   reportFinanceCount,
   reportTotalPaise,
@@ -11,6 +19,7 @@ import {
   resolveFilingBranch,
   reviewCounts,
   sectionTotals,
+  summarizeAdvances,
   summarizeOfflineSales,
   summarizeReports,
   totalsByBranchDate,
@@ -18,7 +27,7 @@ import {
   trendSeries,
   withinRange,
 } from "./report";
-import type { Branch, DailyReport, Debt, OfflineSale } from "./report";
+import type { Advance, Branch, DailyReport, Debt, OfflineSale } from "./report";
 
 function report(overrides: Partial<DailyReport> = {}): DailyReport {
   return {
@@ -41,10 +50,30 @@ function report(overrides: Partial<DailyReport> = {}): DailyReport {
     status: "active",
     voidReason: null,
     createdAt: "2026-10-13T14:20:00.000Z",
+    note: null,
     reviewStatus: "pending",
     reviewNote: null,
     reviewedByName: null,
     reviewedAt: null,
+    editedByName: null,
+    editedAt: null,
+    ...overrides,
+  };
+}
+
+function advance(overrides: Partial<Advance> = {}): Advance {
+  return {
+    id: "advance_1",
+    branchId: "branch_kaza",
+    customerName: "Imran",
+    itemName: "Ceiling fan",
+    amountPaise: 200000,
+    advanceDate: "2026-10-13",
+    appliedOn: null,
+    appliedByName: null,
+    refunds: [],
+    note: null,
+    createdAt: "2026-10-13T09:00:00.000Z",
     ...overrides,
   };
 }
@@ -226,6 +255,256 @@ describe("debt derivation", () => {
     });
     expect(debtOutstandingPaise(overpaid)).toBe(0);
     expect(deriveDebtStatus(overpaid)).toBe("cleared");
+  });
+});
+
+describe("advance derivation", () => {
+  it("holds the full advance until it is applied or refunded", () => {
+    expect(deriveAdvanceStatus(advance())).toBe("open");
+    expect(advanceHeldPaise(advance())).toBe(200000);
+    expect(advanceRefundedPaise(advance())).toBe(0);
+  });
+
+  it("stops holding money once it is applied to a sale date", () => {
+    const applied = advance({
+      appliedOn: "2026-10-20",
+      appliedByName: "Admin",
+    });
+    expect(deriveAdvanceStatus(applied)).toBe("applied");
+    expect(advanceHeldPaise(applied)).toBe(0);
+  });
+
+  it("tracks partial and full refunds", () => {
+    const partial = advance({
+      refunds: [
+        { id: "r1", amountPaise: 50000, refundedOn: "2026-10-14", note: null },
+      ],
+    });
+    expect(deriveAdvanceStatus(partial)).toBe("open");
+    expect(advanceHeldPaise(partial)).toBe(150000);
+
+    const full = advance({
+      refunds: [
+        { id: "r1", amountPaise: 50000, refundedOn: "2026-10-14", note: null },
+        { id: "r2", amountPaise: 150000, refundedOn: "2026-10-15", note: null },
+      ],
+    });
+    expect(deriveAdvanceStatus(full)).toBe("refunded");
+    expect(advanceHeldPaise(full)).toBe(0);
+  });
+
+  it("never holds a negative balance after an over-refund", () => {
+    const over = advance({
+      refunds: [
+        { id: "r1", amountPaise: 250000, refundedOn: "2026-10-14", note: null },
+      ],
+    });
+    expect(advanceHeldPaise(over)).toBe(0);
+  });
+});
+
+describe("summarizeAdvances", () => {
+  it("splits held, applied and refunded money without double counting", () => {
+    const summary = summarizeAdvances([
+      advance({ id: "a", amountPaise: 200000 }),
+      advance({ id: "b", amountPaise: 300000, appliedOn: "2026-10-20" }),
+      advance({
+        id: "c",
+        amountPaise: 100000,
+        refunds: [
+          { id: "r1", amountPaise: 40000, refundedOn: "2026-10-15", note: null },
+        ],
+      }),
+      advance({
+        id: "d",
+        amountPaise: 50000,
+        refunds: [
+          { id: "r2", amountPaise: 50000, refundedOn: "2026-10-16", note: null },
+        ],
+      }),
+    ]);
+
+    expect(summary.heldPaise).toBe(260000);
+    expect(summary.appliedPaise).toBe(300000);
+    expect(summary.refundedPaise).toBe(90000);
+    expect(summary.openCount).toBe(2);
+    expect(summary.appliedCount).toBe(1);
+    expect(summary.refundedCount).toBe(1);
+  });
+
+  it("counts only the unrefunded part when a refunded advance is applied", () => {
+    const partiallyRefunded = advance({
+      amountPaise: 100000,
+      appliedOn: "2026-10-20",
+      refunds: [
+        { id: "r1", amountPaise: 40000, refundedOn: "2026-10-15", note: null },
+      ],
+    });
+
+    expect(advanceAppliedPaise(partiallyRefunded)).toBe(60000);
+    const summary = summarizeAdvances([partiallyRefunded]);
+    expect(summary.appliedPaise).toBe(60000);
+    expect(summary.refundedPaise).toBe(40000);
+    expect(summary.heldPaise).toBe(0);
+    expect(
+      advancesAppliedOn([partiallyRefunded], "branch_kaza", "2026-10-20")
+        .totalPaise,
+    ).toBe(60000);
+  });
+
+  it("reports zeros for an empty ledger", () => {
+    expect(summarizeAdvances([])).toEqual({
+      heldPaise: 0,
+      appliedPaise: 0,
+      refundedPaise: 0,
+      openCount: 0,
+      appliedCount: 0,
+      refundedCount: 0,
+    });
+  });
+});
+
+describe("advancesAppliedOn", () => {
+  it("finds the advances folded into one day's sale for one branch", () => {
+    const advances = [
+      advance({ id: "a", appliedOn: "2026-10-20", amountPaise: 200000 }),
+      advance({ id: "b", appliedOn: "2026-10-20", amountPaise: 150000 }),
+      advance({ id: "c", appliedOn: "2026-10-21", amountPaise: 90000 }),
+      advance({
+        id: "d",
+        branchId: "branch_spillow",
+        appliedOn: "2026-10-20",
+        amountPaise: 50000,
+      }),
+    ];
+
+    expect(advancesAppliedOn(advances, "branch_kaza", "2026-10-20")).toEqual({
+      count: 2,
+      totalPaise: 350000,
+    });
+    expect(advancesAppliedOn(advances, "branch_kaza", "2026-10-19")).toEqual({
+      count: 0,
+      totalPaise: 0,
+    });
+  });
+});
+
+describe("advance actions", () => {
+  it("lets a held advance be added to a sale date", () => {
+    expect(advanceApplyError(advance(), "2026-10-20")).toBeNull();
+    expect(advanceApplyError(advance(), "")).toBe(
+      "Pick the sale date this advance belongs to.",
+    );
+    expect(
+      advanceApplyError(advance({ appliedOn: "2026-10-20" }), "2026-10-20"),
+    ).not.toBeNull();
+  });
+
+  it("allows a refund up to the money still held", () => {
+    const partial = advance({
+      refunds: [
+        { id: "r1", amountPaise: 50000, refundedOn: "2026-10-14", note: null },
+      ],
+    });
+    expect(advanceRefundError(partial, 150000)).toBeNull();
+    expect(advanceRefundError(partial, 150001)).toBe(
+      "The refund cannot be more than the advance still held.",
+    );
+    expect(advanceRefundError(partial, 0)).toBe(
+      "Enter the amount being refunded.",
+    );
+  });
+
+  it("refuses a refund on an advance already counted in a sale", () => {
+    expect(
+      advanceRefundError(advance({ appliedOn: "2026-10-20" }), 100000),
+    ).toBe(
+      "This advance is already counted in a sale, so it cannot be refunded here.",
+    );
+  });
+
+  it("refuses a second refund once the money is fully returned", () => {
+    const refunded = advance({
+      refunds: [
+        { id: "r1", amountPaise: 200000, refundedOn: "2026-10-14", note: null },
+      ],
+    });
+    expect(advanceRefundError(refunded, 100)).toBe(
+      "This advance has already been refunded in full.",
+    );
+  });
+});
+
+describe("buildReportEditPayload", () => {
+  const editedAt = "2026-10-18T10:00:00.000Z";
+
+  it("rebuilds the report with the corrected amounts and audit fields", () => {
+    const { data, error } = buildReportEditPayload(
+      {
+        reportDate: "2026-10-13",
+        cashPaise: 300000,
+        onlinePaise: 0,
+        lines: [
+          { category: "finance", label: "Bajaj Finance", amountPaise: 125000 },
+          { category: "others", label: "Delivery", amountPaise: 0 },
+        ],
+        note: "  counted cash twice  ",
+      },
+      "Admin",
+      editedAt,
+    );
+
+    expect(error).toBeNull();
+    expect(data.cashPaise).toBe(300000);
+    expect(data.note).toBe("counted cash twice");
+    expect(data.editedByName).toBe("Admin");
+    expect(data.editedAt).toBe(editedAt);
+    // Zeroed rows are dropped instead of being stored as empty lines.
+    expect((data.lines as unknown[]).length).toBe(1);
+  });
+
+  it("stores a blank note as null", () => {
+    const { data } = buildReportEditPayload(
+      {
+        reportDate: "2026-10-13",
+        cashPaise: 0,
+        onlinePaise: 0,
+        lines: [],
+        note: "   ",
+      },
+      "Admin",
+      editedAt,
+    );
+    expect(data.note).toBeNull();
+  });
+
+  it("refuses negative or fractional amounts and a missing date", () => {
+    const base = {
+      reportDate: "2026-10-13",
+      cashPaise: 0,
+      onlinePaise: 0,
+      lines: [],
+      note: null,
+    };
+
+    expect(
+      buildReportEditPayload({ ...base, cashPaise: -1 }, "Admin", editedAt)
+        .error,
+    ).not.toBeNull();
+    expect(
+      buildReportEditPayload(
+        {
+          ...base,
+          lines: [{ category: "others", label: "x", amountPaise: 10.5 }],
+        },
+        "Admin",
+        editedAt,
+      ).error,
+    ).not.toBeNull();
+    expect(
+      buildReportEditPayload({ ...base, reportDate: "" }, "Admin", editedAt)
+        .error,
+    ).toBe("Pick the report date.");
   });
 });
 
