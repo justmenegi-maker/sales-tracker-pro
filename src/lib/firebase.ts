@@ -2,7 +2,11 @@ import { initializeApp, getApps, getApp } from "firebase/app";
 import {
   getAuth,
   GoogleAuthProvider,
+  browserLocalPersistence,
+  getRedirectResult,
+  setPersistence,
   signInWithPopup,
+  signInWithRedirect,
   signOut as fbSignOut,
   onAuthStateChanged,
   type User,
@@ -45,6 +49,13 @@ const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 export const db: Firestore = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
+
+// Always show Google's account chooser. When the browser is already signed in
+// to exactly one Google account, Google can skip its UI and close the popup
+// straight away — which the SDK reports as `auth/popup-closed-by-user` even
+// though the person never closed anything. Asking for the chooser keeps the
+// flow visible and gives the popup a window to finish in.
+googleProvider.setCustomParameters({ prompt: "select_account" });
 
 function buildFirestoreErrorInfo(
   error: unknown,
@@ -134,4 +145,13 @@ if (typeof window !== "undefined") {
   testConnection();
 }
 
-export { fbSignOut, onAuthStateChanged, signInWithPopup, type User };
+export {
+  browserLocalPersistence,
+  fbSignOut,
+  getRedirectResult,
+  onAuthStateChanged,
+  setPersistence,
+  signInWithPopup,
+  signInWithRedirect,
+  type User,
+};

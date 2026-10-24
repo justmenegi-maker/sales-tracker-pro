@@ -37,11 +37,15 @@ import {
 } from "firebase/auth";
 import {
   auth,
+  browserLocalPersistence,
   db,
   firestoreErrorMessage,
+  getRedirectResult,
   googleProvider,
   OperationType,
+  setPersistence,
   signInWithPopup,
+  signInWithRedirect,
   fbSignOut,
   onAuthStateChanged,
   type User,
@@ -188,6 +192,49 @@ function toBranch(docSnap: DocumentSnapshot<DocumentData>): Branch {
     managerName: data.managerName || null,
     createdAt: data.createdAt,
   };
+}
+
+/**
+ * Popup failures that mean "this browser cannot run the popup flow", not "the
+ * person changed their mind". These are retried as a full-page redirect, which
+ * is the same Google consent screen without a second window.
+ */
+const POPUP_UNAVAILABLE_CODES = new Set([
+  "auth/popup-blocked",
+  "auth/operation-not-supported-in-this-environment",
+  "auth/web-storage-unsupported",
+  "auth/internal-error",
+]);
+
+/**
+ * Turns a Firebase Auth failure into something the person signing in can act on.
+ *
+ * The SDK's raw message ("Firebase: Error (auth/popup-closed-by-user).") reads
+ * like a crash. Most Google sign-in failures have a concrete cause — an
+ * unauthorised domain, a disabled provider, blocked pop-ups — and saying which
+ * one it is is the difference between "try again" and a dead end.
+ */
+function googleAuthErrorMessage(error: unknown): string {
+  const code = (error as { code?: string } | null | undefined)?.code ?? "";
+  const host =
+    typeof window !== "undefined" ? window.location.hostname : "this domain";
+
+  switch (code) {
+    case "auth/unauthorized-domain":
+      return `Google sign-in is not allowed from ${host} yet. Add ${host} under Firebase Console → Authentication → Settings → Authorized domains, then try again.`;
+    case "auth/operation-not-allowed":
+      return "Google sign-in is switched off for this project. Enable the Google provider under Firebase Console → Authentication → Sign-in method.";
+    case "auth/account-exists-with-different-credential":
+      return "That email already signs in with a password. Use the email and password form below.";
+    case "auth/network-request-failed":
+      return "Could not reach Google. Check the connection and try again.";
+    case "auth/too-many-requests":
+      return "Too many sign-in attempts. Wait a minute and try again.";
+    case "auth/popup-blocked":
+      return "The browser blocked the Google sign-in window. Allow pop-ups for this site and try again.";
+    default:
+      return "Google sign-in did not complete. Try again, or sign in with your email and password below.";
+  }
 }
 
 const StoreContext = createContext<StoreValue | null>(null);
@@ -344,6 +391,37 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     });
 
     return () => unsubscribe();
+  }, [resolveFirebaseUser]);
+
+  // Completes a Google sign-in that came back through the redirect fallback.
+  //
+  // Without this call the redirect round-trip is never read back, so a failure
+  // after Google (an unauthorised domain, a provider that is switched off) ends
+  // in silence on a reloaded page with no explanation.
+  useEffect(() => {
+    let active = true;
+
+    getRedirectResult(auth)
+      .then(async (result) => {
+        if (!active || !result?.user) return;
+        const resolved = await resolveFirebaseUser(result.user);
+        if (active) setSession(resolved);
+      })
+      .catch((err: unknown) => {
+        if (!active) return;
+        const code = (err as { code?: string } | null)?.code ?? "";
+        if (
+          code === "auth/popup-closed-by-user" ||
+          code === "auth/cancelled-popup-request"
+        ) {
+          return;
+        }
+        setError(googleAuthErrorMessage(err));
+      });
+
+    return () => {
+      active = false;
+    };
   }, [resolveFirebaseUser]);
 
   // Firestore Realtime Listeners (Role-Based Scoped)
@@ -608,6 +686,17 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
   const signInWithGoogle = useCallback(async () => {
     setError(null);
+
+    // Keep the session across the redirect fallback below, so Google sending
+    // the person back does not land them signed out.
+    try {
+      await setPersistence(auth, browserLocalPersistence);
+    } catch {
+      // Best effort: persistence is not what decides whether sign-in works.
+    }
+
+    const startedAt = Date.now();
+
     try {
       const result = await signInWithPopup(auth, googleProvider);
       if (result.user) {
@@ -617,8 +706,33 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       }
       return false;
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setError(msg);
+      const code = (err as { code?: string } | null)?.code ?? "";
+      const isCancel =
+        code === "auth/popup-closed-by-user" ||
+        code === "auth/cancelled-popup-request";
+      // A popup that closes within a moment of opening never reached Google's
+      // screen: that is the browser or the embedded view shutting it, not the
+      // person cancelling. Chrome and mobile in-app browsers do this when they
+      // refuse third-party storage for the popup.
+      const closedImmediately = isCancel && Date.now() - startedAt < 1500;
+
+      if (POPUP_UNAVAILABLE_CODES.has(code) || closedImmediately) {
+        // The redirect runs the same Google consent flow in this window, so it
+        // works where the popup cannot. The page navigates away here; the
+        // effect above finishes the sign-in when Google sends us back.
+        try {
+          await signInWithRedirect(auth, googleProvider);
+          return false;
+        } catch (redirectErr: unknown) {
+          setError(googleAuthErrorMessage(redirectErr));
+          return false;
+        }
+      }
+
+      // A real cancel: no error banner, the button simply returns to normal.
+      if (isCancel) return false;
+
+      setError(googleAuthErrorMessage(err));
       return false;
     }
   }, [resolveFirebaseUser]);
