@@ -1,21 +1,80 @@
 rules_version = '2';
+
+// SK Tapri Daily Sales — Firestore security rules.
+//
+// Paste this entire file into Firebase Console → Firestore Database → Rules,
+// then press Publish. It is self-contained: do not keep any of the old text.
+//
+// What changed and why staff could not load their data:
+//
+//  1. The old read rules asked for `resource.data.branchId == myBranchId()`,
+//     and `myBranchId()` read `.data.branchId` on the caller's profile. When
+//     the profile was missing, still being written, or had no branchId, that
+//     field access raised a rules *error*. Firestore reports a rule error to
+//     the client as `permission-denied`, so the reports / debts / advances /
+//     offline-sales listeners failed and the dashboard stayed blank. Every
+//     lookup below uses `get()` (which returns null for a missing document)
+//     and `Map.get(key, default)`, so an incomplete profile is an ordinary
+//     "no" instead of a thrown error.
+//
+//  2. Branch membership came from the profile alone. The profile is linked at
+//     the very end of sign-in and that write can itself be refused, so a
+//     manager linked through the branch's `managerEmail`, or an invited
+//     manager whose profile write had not landed yet, was refused every read
+//     of their own branch. Branch access now accepts any of the three places
+//     the app records that link: the profile, the invitation, the branch's
+//     `managerEmail`.
+//
+//  3. Id patterns are written without any backslash escape (`'^[^/]+$'`,
+//     `'^[^/]+@[^/]+$'`), so an email-shaped invite id like `manager@shop.com`
+//     is accepted no matter how the rules engine handles escapes. The previous
+//     pattern escaped its dot; if an escape is taken literally, every real
+//     email address fails that check, which rejects every invitation and the
+//     invitee's profile link-up.
+//
+//  4. A delete request has no `request.resource`, so shape checks on delete
+//     denied every removal. Delete rules only check the caller and the id.
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Global default-deny safety net
-    match /{document=**} {
-      allow read, write: if false;
-    }
+    // ------------------------------------------------------------------
+    // Caller identity and lookups
+    // ------------------------------------------------------------------
 
-    function isSignedIn() {
+    function signedIn() {
       return request.auth != null;
     }
 
-    function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    // Lower-cased because invitations are stored under the lower-cased email.
+    function callerEmail() {
+      return signedIn() && request.auth.token.email != null
+        ? request.auth.token.email.lower()
+        : '';
     }
 
-    function isValidInviteId(id) {
-      return id is string && id.size() <= 256 && id.matches('^[^/]+@[^/]+\\.[^/]+$');
+    function userPath() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    function adminPath() {
+      return /databases/$(database)/documents/admins/$(request.auth.uid);
+    }
+
+    function invitePath() {
+      return /databases/$(database)/documents/invites/$(callerEmail());
+    }
+
+    function branchPath(branchId) {
+      return /databases/$(database)/documents/branches/$(branchId);
+    }
+
+    // `get()` returns null when the document does not exist, which keeps a
+    // missing profile or invitation from turning into a rule error.
+    function userSnap() {
+      return signedIn() ? get(userPath()) : null;
+    }
+
+    function inviteSnap() {
+      return signedIn() && callerEmail() != '' ? get(invitePath()) : null;
     }
 
     function incoming() {
@@ -26,36 +85,75 @@ service cloud.firestore {
       return resource.data;
     }
 
-    // An admin invitation is an admin vouching for an account: `invites/{email}`
-    // can only be written by an admin (see the `invites` match below), so an
-    // invite with role 'admin' grants the same rights as an `admins/{uid}`
-    // document. Without this an account invited as "System Admin" reached the
-    // admin portal (the client trusts the invite's role) while every admin write
-    // was refused, which is one of the ways branch management failed.
-    function hasAdminInvite() {
-      return isSignedIn() &&
-        request.auth.token.email != null &&
-        exists(/databases/$(database)/documents/invites/$(request.auth.token.email)) &&
-        get(/databases/$(database)/documents/invites/$(request.auth.token.email)).data.role == 'admin';
-    }
+    // ------------------------------------------------------------------
+    // Roles and branch membership
+    // ------------------------------------------------------------------
 
+    // An invitation is written by an admin only, so an invitation with
+    // role 'admin' grants the same rights as an `admins/{uid}` document.
     function isAdmin() {
-      return isSignedIn() && (
-        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
-        (request.auth.token.email == 'justmenegi@gmail.com') ||
-        hasAdminInvite()
+      let snap = inviteSnap();
+      return signedIn() && (
+        callerEmail() == 'justmenegi@gmail.com' ||
+        get(adminPath()) != null ||
+        (snap != null && snap.data.get('role', '') == 'admin')
       );
     }
 
-    function myProfile() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    function profileBranchId() {
+      return userSnap() != null ? userSnap().data.get('branchId', null) : null;
     }
 
-    function myBranchId() {
-      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        ? myProfile().branchId
-        : null;
+    function inviteBranchId() {
+      return inviteSnap() != null ? inviteSnap().data.get('branchId', null) : null;
     }
+
+    // Deliberately permissive: a Firestore document id can never contain `/`,
+    // so this rejects nothing the app writes while still guarding the paths
+    // built below. A stricter pattern only risks locking a real account out of
+    // its own profile over an id that is unusual but legal.
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 &&
+             id.matches('^[^/]+$');
+    }
+
+    // Invitations are stored under the invitee's email address.
+    function isValidInviteId(id) {
+      return id is string && id.size() > 0 && id.size() <= 256 &&
+             id.matches('^[^/]+@[^/]+$');
+    }
+
+    function branchSnap(branchId) {
+      return isValidId(branchId) ? get(branchPath(branchId)) : null;
+    }
+
+    function managerEmailOf(branchId) {
+      let snap = branchSnap(branchId);
+      return snap != null && snap.data.get('managerEmail', '') is string
+        ? snap.data.get('managerEmail', '').lower()
+        : '';
+    }
+
+    function isBranchManager(branchId) {
+      return callerEmail() != '' && managerEmailOf(branchId) == callerEmail();
+    }
+
+    // A caller may work with a branch when they are an admin, when their own
+    // profile is linked to it, when an invitation places them in it, or when
+    // the branch names them as its manager.
+    function canUseBranch(branchId) {
+      return isAdmin() || (
+        branchId is string && branchId != '' && (
+          branchId == profileBranchId() ||
+          branchId == inviteBranchId() ||
+          isBranchManager(branchId)
+        )
+      );
+    }
+
+    // ------------------------------------------------------------------
+    // Document shapes
+    // ------------------------------------------------------------------
 
     function isValidAdmin(data) {
       return data.keys().hasAll(['email', 'createdAt']) &&
@@ -64,22 +162,19 @@ service cloud.firestore {
              data.createdAt is string && data.createdAt.size() <= 64;
     }
 
+    // An unassigned profile stores no branchId, a null one, or an empty one.
     function isValidUserProfile(data) {
       return data.keys().hasAll(['email', 'displayName', 'role', 'createdAt']) &&
              data.keys().hasOnly(['email', 'displayName', 'role', 'branchId', 'assignedBranches', 'createdAt']) &&
              data.email is string && data.email.size() <= 256 &&
              data.displayName is string && data.displayName.size() <= 100 &&
              data.role in ['admin', 'branch'] &&
-             // An unassigned profile stores no branchId, or a null one.
              (!('branchId' in data) || data.branchId == null || (data.branchId is string && data.branchId.size() <= 64)) &&
              (!('assignedBranches' in data) || (data.assignedBranches is list && data.assignedBranches.size() <= 20)) &&
              data.createdAt is string && data.createdAt.size() <= 64;
     }
 
     // The manager contact is optional, so those keys may be missing *or* null.
-    // Requiring a string whenever the key was present is what refused every
-    // branch created from the admin portal: the form sent `managerEmail: null`
-    // when the field was left empty, and the whole create was denied.
     function isValidBranch(data) {
       return data.keys().hasAll(['name', 'isActive']) &&
              data.keys().hasOnly(['name', 'isActive', 'managerEmail', 'managerName', 'createdAt']) &&
@@ -123,9 +218,7 @@ service cloud.firestore {
              (!('editedAt' in data) || data.editedAt == null || (data.editedAt is string && data.editedAt.size() <= 64));
     }
 
-    // An advance is money received before the item is handed over. `appliedOn`
-    // is the later sale date it was counted on; refunds are nested rows so the
-    // ledger can show both without a second collection.
+    // An advance is money received before the item is handed over.
     function isValidAdvance(data) {
       return data.keys().hasAll(['branchId', 'customerName', 'itemName', 'amountPaise', 'advanceDate', 'refunds', 'createdAt']) &&
              data.keys().hasOnly(['branchId', 'customerName', 'itemName', 'amountPaise', 'advanceDate', 'appliedOn', 'appliedByName', 'refunds', 'note', 'createdAt']) &&
@@ -155,9 +248,7 @@ service cloud.firestore {
              data.createdAt is string && data.createdAt.size() <= 64;
     }
 
-    // An offline sale is a reminder to enter an item in the separate daily-sales
-    // system. Its amount is reference only: the money was already received as
-    // cash or online, so no total is derived from this collection.
+    // An offline sale is a reminder; its amount is reference only.
     function isValidOfflineSale(data) {
       return data.keys().hasAll(['branchId', 'itemName', 'amountPaise', 'saleDate', 'addedToSystem', 'createdAt']) &&
              data.keys().hasOnly(['branchId', 'itemName', 'amountPaise', 'saleDate', 'addedToSystem', 'addedAt', 'addedByName', 'createdAt']) &&
@@ -171,121 +262,135 @@ service cloud.firestore {
              data.createdAt is string && data.createdAt.size() <= 64;
     }
 
+    // ------------------------------------------------------------------
+    // Collections
+    // ------------------------------------------------------------------
+
+    // Any signed-in account may check whether a uid is an admin (the client
+    // checks its own); the list of admins is admin-only.
     match /admins/{adminId} {
-      allow get: if isSignedIn() && isValidId(adminId);
+      allow get: if signedIn() && isValidId(adminId);
       allow list: if isAdmin();
-      allow create, update, delete: if isAdmin() && isValidId(adminId) && isValidAdmin(incoming());
+      allow create, update: if isAdmin() && isValidId(adminId) && isValidAdmin(incoming());
+      allow delete: if isAdmin() && isValidId(adminId);
     }
 
     match /users/{userId} {
-      allow get: if isSignedIn() && isValidId(userId) && (request.auth.uid == userId || isAdmin());
+      allow get: if signedIn() && isValidId(userId) && (request.auth.uid == userId || isAdmin());
       allow list: if isAdmin();
-      // A profile cannot claim a role the account is not entitled to: 'admin'
-      // only for an admin, 'branch' otherwise. Without this check anyone who
-      // signed in could self-register `role: 'admin'` and be shown the admin
-      // portal by the client.
-      allow create: if isSignedIn() && isValidId(userId) && request.auth.uid == userId &&
+
+      // 'branch' is the unprivileged role and may always be self-registered;
+      // 'admin' needs an actual admin grant (admins doc, bootstrap email or an
+      // admin invitation). This is also what lets an admin-invited account
+      // create its profile at all: the old rule demanded the *client's* guess
+      // of the role, so a refused create left the account with no profile.
+      allow create: if signedIn() && isValidId(userId) && request.auth.uid == userId &&
                     isValidUserProfile(incoming()) &&
-                    incoming().role == (isAdmin() ? 'admin' : 'branch');
-      // A user may rename themselves, and may adopt the branch + role of the
-      // invitation addressed to their own email — the invite is admin-written,
-      // so its role is the authority, not the caller's claim.
-      allow update: if isSignedIn() && isValidId(userId) && (
+                    (incoming().get('role', '') == 'branch' || isAdmin());
+
+      // A user may rename themselves, and may adopt the branch + role they are
+      // entitled to — from an admin-written invitation, or from a branch that
+      // names their email as its manager. Without the manager case the linking
+      // write was refused, the profile stayed unassigned, and every
+      // branch-scoped read for that manager was denied.
+      allow update: if signedIn() && isValidId(userId) && (
         isAdmin() ||
-        (request.auth.uid == userId && incoming().diff(existing()).affectedKeys().hasOnly(['displayName'])) ||
-        (request.auth.uid == userId && incoming().diff(existing()).affectedKeys().hasOnly(['branchId', 'role']) &&
-         request.auth.token.email != null &&
-         exists(/databases/$(database)/documents/invites/$(request.auth.token.email)) &&
-         get(/databases/$(database)/documents/invites/$(request.auth.token.email)).data.branchId == incoming().branchId &&
-         get(/databases/$(database)/documents/invites/$(request.auth.token.email)).data.role == incoming().role)
+        (request.auth.uid == userId &&
+         incoming().diff(existing()).affectedKeys().hasOnly(['displayName'])) ||
+        (request.auth.uid == userId &&
+         incoming().diff(existing()).affectedKeys().hasOnly(['branchId', 'role']) &&
+         incoming().get('role', '') is string &&
+         (
+           (incoming().get('role', '') == 'branch' &&
+            isBranchManager(incoming().get('branchId', ''))) ||
+           (inviteSnap() != null &&
+            inviteSnap().data.get('branchId', null) == incoming().get('branchId', null) &&
+            inviteSnap().data.get('role', null) == incoming().get('role', null))
+         ))
       );
+
       allow delete: if isAdmin() && isValidId(userId);
     }
 
+    // An admin manages invitations. The invitee may read their own (matched by
+    // document id, so a *missing* invite returns "no document" instead of a
+    // permission error) and may flip their own invite to 'active' on first
+    // sign-in — that one field only.
     match /invites/{inviteId} {
-      allow get: if isSignedIn() && (isAdmin() || resource.data.email == request.auth.token.email);
+      allow get: if signedIn() && isValidInviteId(inviteId) &&
+                    (isAdmin() || (callerEmail() != '' && inviteId.lower() == callerEmail()));
       allow list: if isAdmin();
-      allow create, delete: if isAdmin() && isValidInviteId(inviteId) && isValidStaffInvite(incoming());
-      // An admin manages invitations. The invited person may only flip their own
-      // invitation to 'active' on first sign-in — that is the one field, so the
-      // portal's Invited/Active badge reflects reality without handing the
-      // invitee the staff directory.
-      allow update: if isValidInviteId(inviteId) && isValidStaffInvite(incoming()) && (
+      allow create: if isAdmin() && isValidInviteId(inviteId) && isValidStaffInvite(incoming());
+      allow update: if signedIn() && isValidInviteId(inviteId) && isValidStaffInvite(incoming()) && (
         isAdmin() ||
-        (isSignedIn() &&
-         resource.data.email == request.auth.token.email &&
-         incoming().diff(resource.data).affectedKeys().hasOnly(['status']) &&
-         incoming().status == 'active')
+        (callerEmail() != '' && inviteId.lower() == callerEmail() &&
+         incoming().diff(existing()).affectedKeys().hasOnly(['status']) &&
+         incoming().get('status', '') == 'active')
       );
+      allow delete: if isAdmin() && isValidInviteId(inviteId);
     }
 
     // Branch names are readable by any signed-in staff member, deliberately not
     // scoped to the caller's own branch. Firestore rules are not filters: a
     // query has to be provably allowed for every document it could return, so
-    // the previous `branchId == myBranchId() || resource.data.managerEmail == …`
-    // condition denied the whole `collection('branches')` read for a branch
-    // login. That denial left the client with no branch at all, which is what
-    // stopped branch staff filing a daily report ("Could not file the report"),
-    // and it silently broke the sign-in lookup that links an invited manager by
-    // email. A branch document carries only a name, an active flag and the
-    // manager contact, so reading it is not sensitive. Writes stay admin-only,
-    // and reports/debts keep their own-branch scoping below.
+    // an own-branch-only rule denied the whole `collection('branches')` read,
+    // which left the client with no branch and blocked filing a report. A
+    // branch document holds only a name, an active flag and the manager
+    // contact. Writes stay admin-only.
     match /branches/{branchId} {
-      allow get, list: if isSignedIn();
+      allow get, list: if signedIn();
       allow create, update: if isAdmin() && isValidId(branchId) && isValidBranch(incoming());
       allow delete: if isAdmin() && isValidId(branchId);
     }
 
     match /reports/{reportId} {
-      allow get, list: if isSignedIn() && (isAdmin() || resource.data.branchId == myBranchId());
-      allow create: if isSignedIn() && isValidId(reportId) &&
-                    incoming().submittedBy == request.auth.uid &&
+      allow get, list: if signedIn() && canUseBranch(existing().get('branchId', null));
+      allow create: if signedIn() && isValidId(reportId) &&
+                    incoming().get('submittedBy', '') == request.auth.uid &&
                     isValidDailyReport(incoming()) &&
-                    (isAdmin() || incoming().branchId == myBranchId());
-      allow update: if isSignedIn() && isValidId(reportId) && isValidDailyReport(incoming()) && (
-        isAdmin() ||
-        (existing().status == 'active' &&
-         incoming().diff(existing()).affectedKeys().hasOnly(['reviewStatus', 'reviewNote', 'reviewedByName', 'reviewedAt']) &&
-         isAdmin())
-      );
+                    canUseBranch(incoming().get('branchId', null));
+      // Voiding, correcting and reviewing a filed report are admin actions.
+      allow update: if signedIn() && isValidId(reportId) && isAdmin() &&
+                    isValidDailyReport(incoming());
       allow delete: if isAdmin() && isValidId(reportId);
     }
 
     match /debts/{debtId} {
-      allow get, list: if isSignedIn() && (isAdmin() || resource.data.branchId == myBranchId());
-      allow create: if isSignedIn() && isValidId(debtId) && isValidDebt(incoming()) &&
-                    (isAdmin() || incoming().branchId == myBranchId());
-      allow update: if isSignedIn() && isValidId(debtId) && isValidDebt(incoming()) && (
+      allow get, list: if signedIn() && canUseBranch(existing().get('branchId', null));
+      allow create: if signedIn() && isValidId(debtId) && isValidDebt(incoming()) &&
+                    canUseBranch(incoming().get('branchId', null));
+      // A branch may record a payment or set the due date; the product, amount
+      // and date stay untouched once the debt is recorded.
+      allow update: if signedIn() && isValidId(debtId) && isValidDebt(incoming()) && (
         isAdmin() ||
-        (existing().branchId == myBranchId() &&
+        (canUseBranch(existing().get('branchId', null)) &&
          incoming().diff(existing()).affectedKeys().hasOnly(['payments', 'dueDate']))
       );
       allow delete: if isAdmin() && isValidId(debtId);
     }
 
     match /advances/{advanceId} {
-      allow get, list: if isSignedIn() && (isAdmin() || resource.data.branchId == myBranchId());
-      allow create: if isSignedIn() && isValidId(advanceId) && isValidAdvance(incoming()) &&
-                    (isAdmin() || incoming().branchId == myBranchId());
+      allow get, list: if signedIn() && canUseBranch(existing().get('branchId', null));
+      allow create: if signedIn() && isValidId(advanceId) && isValidAdvance(incoming()) &&
+                    canUseBranch(incoming().get('branchId', null));
       // A held advance can be folded into a sale or refunded; its customer,
-      // item, amount and received date stay untouched after it is recorded.
-      allow update: if isSignedIn() && isValidId(advanceId) && isValidAdvance(incoming()) && (
+      // item, amount and received date stay untouched.
+      allow update: if signedIn() && isValidId(advanceId) && isValidAdvance(incoming()) && (
         isAdmin() ||
-        (existing().branchId == myBranchId() &&
+        (canUseBranch(existing().get('branchId', null)) &&
          incoming().diff(existing()).affectedKeys().hasOnly(['appliedOn', 'appliedByName', 'refunds']))
       );
       allow delete: if isAdmin() && isValidId(advanceId);
     }
 
     match /offlineSales/{saleId} {
-      allow get, list: if isSignedIn() && (isAdmin() || resource.data.branchId == myBranchId());
-      allow create: if isSignedIn() && isValidId(saleId) && isValidOfflineSale(incoming()) &&
-                    (isAdmin() || incoming().branchId == myBranchId());
-      // The branch marks an item as entered in the other system (or undoes it);
-      // the item, price and date stay untouched.
-      allow update: if isSignedIn() && isValidId(saleId) && isValidOfflineSale(incoming()) && (
+      allow get, list: if signedIn() && canUseBranch(existing().get('branchId', null));
+      allow create: if signedIn() && isValidId(saleId) && isValidOfflineSale(incoming()) &&
+                    canUseBranch(incoming().get('branchId', null));
+      // The branch marks an item as entered in the other system (or undoes it).
+      allow update: if signedIn() && isValidId(saleId) && isValidOfflineSale(incoming()) && (
         isAdmin() ||
-        (existing().branchId == myBranchId() &&
+        (canUseBranch(existing().get('branchId', null)) &&
          incoming().diff(existing()).affectedKeys().hasOnly(['addedToSystem', 'addedAt', 'addedByName']))
       );
       allow delete: if isAdmin() && isValidId(saleId);
