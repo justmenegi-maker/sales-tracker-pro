@@ -61,11 +61,24 @@ export function ReportForm() {
       store_use: 0,
       others: 0,
     };
-    for (const line of lines) base[line.category] += line.amountPaise;
+    for (const line of lines) {
+      // Expense is money paid out, so it is kept out of Total Sale.
+      if (line.category === "expense") continue;
+      base[line.category] += line.amountPaise;
+    }
     return base;
   }, [cashPaise, lines, onlinePaise]);
 
+  const expenseTotal = useMemo(
+    () =>
+      lines
+        .filter((line) => line.category === "expense")
+        .reduce((sum, line) => sum + line.amountPaise, 0),
+    [lines],
+  );
+
   const total = computeTotalSale(sections);
+  const netInHand = total - expenseTotal;
 
   const alreadyFiled: DailyReport[] = useMemo(
     () => (branchId ? reportsForDate(reports, branchId, reportDate) : []),
@@ -286,7 +299,11 @@ export function ReportForm() {
                           updateLine(line.key, { label: event.target.value })
                         }
                         placeholder={
-                          meta.key === "debt" ? "Ceiling fan" : "Reference"
+                          meta.key === "debt"
+                            ? "Ceiling fan"
+                            : meta.key === "expense"
+                              ? "Electricity bill"
+                              : "Reference"
                         }
                       />
                     </div>
@@ -346,7 +363,8 @@ export function ReportForm() {
             <CardTitle className="text-lg">Total Sale</CardTitle>
             <p className="text-xs text-muted-foreground">
               Cash + Online + Finance + Debt + Exchange + Cheque + Store use +
-              Others
+              Others. Expense rows are money paid out, so they sit below the
+              total and never inflate it.
             </p>
           </CardHeader>
           <CardContent className="space-y-3 p-4 pt-0 sm:p-6 sm:pt-0">
@@ -363,6 +381,20 @@ export function ReportForm() {
                   <dd className="tnum">{formatINR(sections[section.key])}</dd>
                 </div>
               ))}
+            </dl>
+            <dl className="space-y-1.5 border-t pt-2 text-sm">
+              <div className="flex items-baseline justify-between gap-3">
+                <dt className="text-muted-foreground">
+                  Expense (money out)
+                </dt>
+                <dd className="tnum text-rose-600">
+                  −{formatINR(expenseTotal)}
+                </dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-3">
+                <dt className="font-medium">Net in hand</dt>
+                <dd className="tnum font-semibold">{formatINR(netInHand)}</dd>
+              </div>
             </dl>
             <Button
               className="w-full"

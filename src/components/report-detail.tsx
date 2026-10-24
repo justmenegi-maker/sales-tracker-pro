@@ -253,6 +253,24 @@ export function ReportDetail({
               Cash + Online + Finance + Debt + Exchange + Cheque + Store use +
               Others
             </p>
+            {summary.expensePaise > 0 ? (
+              <dl className="mt-2 space-y-1 border-t border-primary/20 pt-2 text-xs">
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-muted-foreground">
+                    Expense (money out, not in total)
+                  </dt>
+                  <dd className="tnum text-rose-600">
+                    −{formatINR(summary.expensePaise)}
+                  </dd>
+                </div>
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="font-medium">Net in hand</dt>
+                  <dd className="tnum font-medium">
+                    {formatINR(totalPaise - summary.expensePaise)}
+                  </dd>
+                </div>
+              </dl>
+            ) : null}
             {dayAdvances.count > 0 ? (
               <p className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-900">
                 Includes {formatINR(dayAdvances.totalPaise)} of advance money

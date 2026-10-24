@@ -4,7 +4,9 @@
  * This mirrors the Firestore shape enforced by `firestore.rules`:
  *  - a `reports` document keeps cash + online as fields and the rest as lines
  *  - every line carries its category (finance / debt / exchange / cheque /
- *    store_use / others) instead of living in its own collection
+ *    store_use / expense / others) instead of living in its own collection
+ *  - `expense` is the one category that is money *out*: it is stored on the
+ *    report and shown in its own section, but it never adds to Total Sale
  *  - a `debts` document holds its payments inline, which drives the debt ledger
  *
  * The client can always recompute a total from a report, and does so through
@@ -20,6 +22,7 @@ export type LineCategory =
   | "exchange"
   | "cheque"
   | "store_use"
+  | "expense"
   | "others";
 
 export type SectionKey = ReportSection;
@@ -213,6 +216,11 @@ export const LINE_CATEGORY_META: Array<{
   { key: "exchange", label: "Exchange", hint: "Item being exchanged" },
   { key: "cheque", label: "Cheque", hint: "Bank / cheque number" },
   { key: "store_use", label: "Store use", hint: "Reason" },
+  {
+    key: "expense",
+    label: "Expense rows",
+    hint: "Money spent — recorded but never added to Total Sale",
+  },
   { key: "others", label: "Others", hint: "Description" },
 ];
 
@@ -235,6 +243,8 @@ export function sectionTotals(report: DailyReport): Record<SectionKey, number> {
   };
 
   for (const line of report.lines) {
+    // Expenses are money paid out, so they are kept off the Total Sale.
+    if (line.category === "expense") continue;
     totals[line.category] += line.amountPaise;
   }
 
@@ -244,6 +254,13 @@ export function sectionTotals(report: DailyReport): Record<SectionKey, number> {
 /** Total Sale for a report, computed through the shared totals module. */
 export function reportTotalPaise(report: DailyReport): number {
   return computeTotalSale(sectionTotals(report));
+}
+
+/** Everything the day cost, summed from its expense rows. Never in Total Sale. */
+export function reportExpensePaise(report: DailyReport): number {
+  return report.lines
+    .filter((line) => line.category === "expense")
+    .reduce((sum, line) => sum + line.amountPaise, 0);
 }
 
 export function reportFinanceCount(report: DailyReport): number {
@@ -606,6 +623,8 @@ export type ReportSummary = {
   report: DailyReport;
   totalPaise: number;
   sections: Record<SectionKey, number>;
+  /** Money spent that day; tracked beside Total Sale, never inside it. */
+  expensePaise: number;
   financeCount: number;
   hasDebt: boolean;
 };
@@ -617,6 +636,7 @@ export function summarizeReports(reports: DailyReport[]): ReportSummary[] {
       report,
       totalPaise: computeTotalSale(sections),
       sections,
+      expensePaise: reportExpensePaise(report),
       financeCount: report.lines.filter((line) => line.category === "finance").length,
       hasDebt: report.lines.some((line) => line.category === "debt"),
     };

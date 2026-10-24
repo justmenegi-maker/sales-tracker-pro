@@ -15,6 +15,9 @@ export type ReportSection =
  *
  * Total Sale = Cash + Online + Finance + Debt + Exchange + Cheque + Store use + Others.
  *
+ * Expenses are deliberately absent: they are money paid out, recorded on the
+ * report beside Total Sale so the day's net in hand can be read off it.
+ *
  * This is the single place the arithmetic lives: the form previews with it and
  * the submit path recomputes with it, so the stored total is never trusted from
  * the client.

@@ -64,9 +64,21 @@ export function ReportEditForm({
       store_use: 0,
       others: 0,
     };
-    for (const line of lines) base[line.category] += line.amountPaise;
+    for (const line of lines) {
+      // Expenses are money out and stay outside Total Sale.
+      if (line.category === "expense") continue;
+      base[line.category] += line.amountPaise;
+    }
     return base;
   }, [cashPaise, lines, onlinePaise]);
+
+  const expenseTotal = useMemo(
+    () =>
+      lines
+        .filter((line) => line.category === "expense")
+        .reduce((sum, line) => sum + line.amountPaise, 0),
+    [lines],
+  );
 
   const total = computeTotalSale(sections);
 
@@ -206,9 +218,23 @@ export function ReportEditForm({
         })}
       </div>
 
-      <div className="bg-muted/50 flex flex-wrap items-center justify-between gap-3 rounded-md px-3 py-2">
-        <span className="text-muted-foreground text-sm">New Total Sale</span>
-        <span className="tnum font-display text-lg font-semibold">{formatINR(total)}</span>
+      <div className="bg-muted/50 space-y-1.5 rounded-md px-3 py-2">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <span className="text-muted-foreground text-sm">New Total Sale</span>
+          <span className="tnum font-display text-lg font-semibold">
+            {formatINR(total)}
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+          <span className="text-muted-foreground">Expense (not in total)</span>
+          <span className="tnum text-rose-600">−{formatINR(expenseTotal)}</span>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+          <span className="font-medium">Net in hand</span>
+          <span className="tnum font-medium">
+            {formatINR(total - expenseTotal)}
+          </span>
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-2">

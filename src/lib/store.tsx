@@ -828,6 +828,16 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         return failure("Every amount must be a non-negative number of rupees.");
       }
 
+      // Expense rows are outside Total Sale, so the check above never sees
+      // them. Validate them here rather than storing a negative expense.
+      if (
+        input.lines.some(
+          (line) => !Number.isInteger(line.amountPaise) || line.amountPaise < 0,
+        )
+      ) {
+        return failure("Every amount must be a non-negative number of rupees.");
+      }
+
       const branch = resolveFilingBranch({
         branchId: input.branchId,
         branches,
