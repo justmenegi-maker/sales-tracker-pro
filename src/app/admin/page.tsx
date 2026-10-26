@@ -261,33 +261,39 @@ function AdminBody() {
       subtitle={`${branches.length} branches · ${invites.length} staff members`}
     >
       <div className="space-y-6">
-        {/* Navigation Tabs */}
-        <div className="flex border-b">
+        {/* Navigation Tabs — scrolls sideways on a phone instead of stretching the page. */}
+        <div className="flex overflow-x-auto border-b">
           <button
             type="button"
             className={cn(
-              "flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium transition-colors",
+              "flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-3 py-3 text-sm font-medium transition-colors sm:px-4",
               activeTab === "sales"
                 ? "border-primary text-primary"
                 : "border-transparent text-muted-foreground hover:text-foreground",
             )}
             onClick={() => setActiveTab("sales")}
           >
-            <LayoutDashboard className="size-4" />
-            Consolidated Sales & Overview
+            <LayoutDashboard className="size-4 shrink-0" />
+            <span className="hidden sm:inline">Consolidated Sales &amp; Overview</span>
+            <span className="sm:hidden">Sales &amp; overview</span>
           </button>
           <button
             type="button"
             className={cn(
-              "flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium transition-colors",
+              "flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-3 py-3 text-sm font-medium transition-colors sm:px-4",
               activeTab === "staff"
                 ? "border-primary text-primary"
                 : "border-transparent text-muted-foreground hover:text-foreground",
             )}
             onClick={() => setActiveTab("staff")}
           >
-            <Users className="size-4" />
-            Branches & Staff Management ({branches.length} Branches, {invites.length} Invites)
+            <Users className="size-4 shrink-0" />
+            <span className="hidden sm:inline">
+              Branches &amp; Staff Management ({branches.length} Branches, {invites.length} Invites)
+            </span>
+            <span className="sm:hidden">
+              Branches &amp; staff ({branches.length}/{invites.length})
+            </span>
           </button>
         </div>
 
@@ -388,7 +394,10 @@ function AdminBody() {
                           </p>
                         </div>
                         {row.branch.managerEmail ? (
-                          <Badge variant="outline" className="text-[10px]">
+                          <Badge
+                            variant="outline"
+                            className="max-w-[9rem] truncate text-[10px] sm:max-w-none"
+                          >
                             {row.branch.managerEmail}
                           </Badge>
                         ) : null}
@@ -643,16 +652,16 @@ function AdminBody() {
                   {branches.map((b) => (
                     <div
                       key={b.id}
-                      className="flex flex-wrap items-center justify-between gap-3 p-4 hover:bg-muted/40 transition-colors"
+                      className="flex flex-wrap items-center justify-between gap-3 p-3 transition-colors hover:bg-muted/40 sm:p-4"
                     >
-                      <div className="space-y-0.5">
-                        <div className="flex items-center gap-2">
-                          <p className="font-semibold text-sm">{b.name}</p>
-                          <Badge variant="outline" className="text-[10px] font-mono">
+                      <div className="min-w-0 flex-1 space-y-0.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-sm font-semibold">{b.name}</p>
+                          <Badge variant="outline" className="max-w-full truncate font-mono text-[10px]">
                             ID: {b.id}
                           </Badge>
                         </div>
-                        <p className="text-xs text-muted-foreground">
+                        <p className="break-words text-xs text-muted-foreground">
                           Manager: {b.managerEmail ? `${b.managerName ? `${b.managerName} (${b.managerEmail})` : b.managerEmail}` : "Not assigned"}
                         </p>
                       </div>
@@ -703,10 +712,10 @@ function AdminBody() {
                     {invites.map((inv) => (
                       <div
                         key={inv.id}
-                        className="flex flex-wrap items-center justify-between gap-3 p-4 hover:bg-muted/40 transition-colors"
+                        className="flex flex-wrap items-center justify-between gap-3 p-3 transition-colors hover:bg-muted/40 sm:p-4"
                       >
-                        <div className="space-y-0.5">
-                          <div className="flex items-center gap-2">
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <div className="flex flex-wrap items-center gap-2">
                             <span className="font-semibold text-sm">{inv.displayName}</span>
                             <Badge variant={inv.status === "active" ? "default" : "outline"} className="text-[10px] gap-1">
                               {inv.status === "active" ? (
@@ -725,7 +734,7 @@ function AdminBody() {
                               {inv.role}
                             </Badge>
                           </div>
-                          <p className="text-xs text-muted-foreground font-mono">
+                          <p className="break-all font-mono text-xs text-muted-foreground">
                             {inv.email} · Branch: <span className="font-sans font-medium text-foreground">{inv.branchName}</span>
                           </p>
                         </div>

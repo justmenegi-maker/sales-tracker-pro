@@ -45,6 +45,9 @@ export const viewport: Viewport = {
   ],
   width: "device-width",
   initialScale: 1,
+  // Lets the sticky header and the bottom sheets pad themselves around the
+  // notch / home indicator on phones instead of sitting under it.
+  viewportFit: "cover",
 };
 
 function LayoutInner({ children }: { children: ReactNode }) {

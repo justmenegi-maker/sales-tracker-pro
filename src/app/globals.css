@@ -99,6 +99,10 @@
     font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
       Helvetica, Arial, sans-serif;
     -webkit-font-smoothing: antialiased;
+    /* `clip` (not `hidden`) so a wide badge or table cannot scroll the whole
+       phone page sideways while the sticky header keeps working. */
+    overflow-x: clip;
+    -webkit-tap-highlight-color: transparent;
   }
 
   h1,
@@ -144,6 +148,16 @@
     font-feature-settings: "tnum";
   }
 
+  /* Phone chrome: keeps content clear of the notch and the home indicator
+     when the app runs installed (viewport-fit=cover). */
+  .safe-top {
+    padding-top: env(safe-area-inset-top);
+  }
+
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
   .paper-grid {
     background-image:
       linear-gradient(
@@ -169,3 +183,23 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/*
+  Phone-only corrections.
+
+  These sit outside `@layer` on purpose: they have to beat the `text-sm`
+  utility that every field ships with, and unlayered rules win over layered
+  ones without `!important`.
+
+  iOS Safari zooms the whole page in whenever a focused input is smaller than
+  16px, which left staff tapping a field and suddenly looking at a magnified
+  corner of the form. 16px on small screens keeps the layout still.
+*/
+@media (max-width: 640px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+

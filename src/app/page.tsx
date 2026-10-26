@@ -17,7 +17,7 @@ export default function HomePage() {
   }, [ready, session, router]);
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-4">
+    <div className="flex min-h-dvh items-center justify-center px-4">
       <div className="flex flex-col items-center gap-6 text-center">
         <span className="grid size-12 place-items-center rounded-md bg-primary text-primary-foreground">
           <Store className="size-6" />

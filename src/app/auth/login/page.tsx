@@ -66,7 +66,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="grid min-h-screen lg:grid-cols-[1.1fr_1fr]">
+    <div className="grid min-h-dvh lg:grid-cols-[1.1fr_1fr]">
       <div className="relative hidden flex-col justify-between overflow-hidden border-r bg-primary/5 p-10 lg:flex">
         <div
           aria-hidden
@@ -106,7 +106,7 @@ export default function LoginPage() {
         </p>
       </div>
 
-      <div className="flex items-center justify-center px-4 py-12">
+      <div className="flex items-center justify-center px-4 py-10 sm:py-12">
         <div className="w-full max-w-md space-y-5">
           <div className="flex items-center justify-between lg:hidden">
             <Link

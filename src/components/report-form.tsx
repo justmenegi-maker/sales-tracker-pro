@@ -159,6 +159,7 @@ export function ReportForm() {
   }
 
   return (
+    <>
     <div className="grid gap-6 lg:grid-cols-[1.6fr_1fr] lg:items-start">
       <div className="space-y-4">
         <Card>
@@ -433,5 +434,32 @@ export function ReportForm() {
         ) : null}
       </div>
     </div>
+
+      {/* The form is long on a phone, so the total and the file action stay
+          within reach instead of sitting under nine screens of entries. */}
+      <div
+        className="fixed inset-x-0 bottom-0 z-30 border-t bg-background/95 px-3 pt-2 backdrop-blur lg:hidden"
+        style={{ paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" }}
+      >
+        <div className="flex items-center gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+              Total sale
+            </p>
+            <p className="tnum font-display text-lg font-semibold leading-tight">
+              {formatINR(total)}
+            </p>
+          </div>
+          <Button
+            size="lg"
+            className="shrink-0"
+            disabled={saving || total <= 0}
+            onClick={() => void submit()}
+          >
+            {saving ? "Filing…" : "File report"}
+          </Button>
+        </div>
+      </div>
+    </>
   );
 }

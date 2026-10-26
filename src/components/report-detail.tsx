@@ -164,10 +164,10 @@ export function ReportDetail({
         role="dialog"
         aria-modal="true"
         aria-label={`Report for ${report.reportDate}`}
-        className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-t-xl border bg-card text-card-foreground shadow-xl sm:rounded-xl"
+        className="safe-bottom max-h-[92dvh] w-full max-w-2xl overflow-y-auto rounded-t-xl border bg-card text-card-foreground shadow-xl sm:rounded-xl"
         onClick={(event) => event.stopPropagation()}
       >
-        <header className="sticky top-0 z-10 flex items-start gap-3 border-b bg-card/95 px-5 py-4 backdrop-blur">
+        <header className="sticky top-0 z-10 flex items-start gap-2 border-b bg-card/95 px-4 py-3 backdrop-blur sm:gap-3 sm:px-5 sm:py-4">
           <div className="min-w-0 flex-1">
             <p className="font-display text-lg font-semibold">
               {formatDateLabel(report.reportDate)}{" "}
@@ -182,7 +182,7 @@ export function ReportDetail({
                 : ""}
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
             {report.status === "voided" ? (
               <Badge variant="destructive">Voided</Badge>
             ) : null}
@@ -196,7 +196,12 @@ export function ReportDetail({
                 onClick={() => setEditing((current) => !current)}
               >
                 <PencilLine className="size-4" />
-                {editing ? "Close edit" : "Edit"}
+                <span className="hidden sm:inline">
+                  {editing ? "Close edit" : "Edit"}
+                </span>
+                <span className="sr-only sm:hidden">
+                  {editing ? "Close edit" : "Edit report"}
+                </span>
               </Button>
             ) : null}
             <Button
@@ -211,14 +216,14 @@ export function ReportDetail({
         </header>
 
         {editing ? (
-          <div className="px-5 py-4">
+          <div className="px-4 py-4 sm:px-5">
             <ReportEditForm
               summary={summary}
               onCancel={() => setEditing(false)}
             />
           </div>
         ) : (
-          <div className="space-y-5 px-5 py-4">
+          <div className="space-y-5 px-4 py-4 sm:px-5">
           <div className="rounded-lg border border-primary/30 bg-primary/5 p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>

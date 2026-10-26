@@ -42,7 +42,7 @@ export function PWAInstallButton({
         title="Install SK Tapri as an App"
       >
         <Download className="size-4 animate-bounce" />
-        {showLabel && <span>Install App</span>}
+        {showLabel && <span className="hidden sm:inline">Install App</span>}
       </Button>
     );
   }
@@ -62,7 +62,7 @@ export function PWAInstallButton({
           title="Install on iPhone / iPad"
         >
           <Smartphone className="size-4" />
-          {showLabel && <span>Install App</span>}
+          {showLabel && <span className="hidden sm:inline">Install App</span>}
         </Button>
 
         {showIOSGuide && (
@@ -146,7 +146,7 @@ export function PWAInstallButton({
         title="App Installation"
       >
         <Smartphone className="size-4 text-primary" />
-        {showLabel && <span>App</span>}
+        {showLabel && <span className="hidden sm:inline">App</span>}
       </Button>
 
       {showGenericGuide && (

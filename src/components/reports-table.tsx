@@ -119,15 +119,17 @@ export function ReportsTable({
                   amount: sections[meta.key],
                 })).filter((section) => section.amount > 0);
                 return (
-                  <div key={report.id} className="py-3.5">
-                    <div className="flex items-center gap-2">
+                  <div key={report.id} className="py-3">
+                    {/* The row wraps on a phone so the review badges and the
+                        Void control drop under the date instead of crushing it. */}
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
                       <button
                         type="button"
                         onClick={() => {
                           setFlagFirst(false);
                           setOpenId(report.id);
                         }}
-                        className="group flex min-w-0 flex-1 items-center gap-3 rounded-md px-1 py-1 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        className="group flex w-full min-w-0 items-center gap-3 rounded-md px-1 py-1 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-auto sm:flex-1"
                       >
                         <span className="min-w-0 flex-1">
                           <span className="block text-sm font-medium">
@@ -153,7 +155,7 @@ export function ReportsTable({
                         <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
                       </button>
 
-                      <div className="flex shrink-0 items-center gap-1">
+                      <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-1 sm:w-auto">
                         {report.status === "voided" ? (
                           <Badge variant="destructive">Voided</Badge>
                         ) : (

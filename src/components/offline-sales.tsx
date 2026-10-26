@@ -318,17 +318,22 @@ export function OfflineSaleReminders({
                       size="sm"
                       variant={sale.addedToSystem ? "ghost" : "outline"}
                       disabled={busyId === sale.id}
+                      aria-label={
+                        sale.addedToSystem
+                          ? `Undo ${sale.itemName}`
+                          : `Mark ${sale.itemName} as added`
+                      }
                       onClick={() => void toggleAdded(sale)}
                     >
                       {sale.addedToSystem ? (
                         <>
-                          <RotateCcw className="size-4" />
-                          Undo
+                          <RotateCcw className="size-4 shrink-0" />
+                          <span className="hidden sm:inline">Undo</span>
                         </>
                       ) : (
                         <>
-                          <CheckCircle2 className="size-4" />
-                          Mark added
+                          <CheckCircle2 className="size-4 shrink-0" />
+                          <span className="hidden sm:inline">Mark added</span>
                         </>
                       )}
                     </Button>
