@@ -552,6 +552,156 @@ export function buildReportEditPayload(
 }
 
 /**
+ * The debt rows of a report, normalised for the ledger.
+ *
+ * Mirrors what filing writes to `debts`, so a correction and a filing can never
+ * disagree about which rows should exist in the ledger.
+ */
+export function reportDebtRows(
+  lines: Array<Pick<ReportLine, "category" | "label" | "amountPaise">>,
+): Array<{ label: string; amountPaise: number }> {
+  return lines
+    .filter((line) => line.category === "debt" && line.amountPaise > 0)
+    .map((line) => ({
+      label: line.label.trim() || "Credit sale item",
+      amountPaise: line.amountPaise,
+    }));
+}
+
+/** What an admin correction does to the debt ledger. */
+export type ReportDebtChange = {
+  /** Ledger entries whose product, amount or date the correction rewrites. */
+  updates: Array<{
+    id: string;
+    productName: string;
+    amountPaise: number;
+    debtDate: string;
+  }>;
+  /** Debt rows the correction keeps: they need a new ledger entry. */
+  creates: Array<{ productName: string; amountPaise: number; debtDate: string }>;
+  /**
+   * Ledger entries the correction removes — a debt row changed into expense, or
+   * dropped. They are voided, never deleted, so the money trail stays auditable.
+   */
+  voids: Array<{
+    id: string;
+    productName: string;
+    amountPaise: number;
+    paymentCount: number;
+    paidPaise: number;
+  }>;
+};
+
+function debtNameKey(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+/**
+ * Reconciles the debt ledger with the debt rows of a corrected report.
+ *
+ * Without this, changing a debt row into an expense (or fixing its amount) left
+ * the ledger holding the old debt, so the ledger and the day's Total Sale told
+ * two different stories.
+ *
+ * Matching is deliberately generous: a row is paired with a ledger entry by
+ * product + amount first, then amount, then product, then order, so a corrected
+ * amount keeps the payments already recorded against that debt. Anything left
+ * over is voided, and debt rows with no ledger entry are created.
+ */
+export function planReportDebtSync(input: {
+  branchId: string;
+  previousDate: string;
+  /** The debt rows exactly as this report held them before the correction. */
+  previousDebtLines: Array<{ label: string; amountPaise: number }>;
+  /**
+   * Other reports on the same branch and date that still hold a debt row — the
+   * only reports a ledger entry from that date could belong to. When there are
+   * none, a leftover entry can only be this report's, which is how a day that
+   * was already corrected into a mismatch gets repaired.
+   */
+  otherDebtReportsOnDate: number;
+  nextDate: string;
+  debtLines: Array<{ label: string; amountPaise: number }>;
+  ledger: Debt[];
+}): ReportDebtChange {
+  const candidates = input.ledger.filter((debt) => {
+    if (debt.source !== "report" || debt.voided) return false;
+    if (debt.branchId !== input.branchId) return false;
+    if (debt.debtDate !== input.previousDate) return false;
+
+    // A ledger entry carries no pointer back to its report, and two reports may
+    // share a date. So an entry only counts as this report's when no other debt
+    // report shares the day, or when it looks like a row this report held
+    // before the correction.
+    if (input.otherDebtReportsOnDate === 0) return true;
+    return input.previousDebtLines.some(
+      (line) =>
+        debt.amountPaise === line.amountPaise &&
+        debtNameKey(debt.productName) === debtNameKey(line.label),
+    );
+  });
+
+  const remaining = [...candidates];
+  const openLines = [...input.debtLines];
+  const pairs: Array<{ debt: Debt; line: { label: string; amountPaise: number } }> = [];
+
+  const passes: Array<(debt: Debt, line: { label: string; amountPaise: number }) => boolean> = [
+    (debt, line) =>
+      debt.amountPaise === line.amountPaise &&
+      debtNameKey(debt.productName) === debtNameKey(line.label),
+    (debt, line) => debt.amountPaise === line.amountPaise,
+    (debt, line) => debtNameKey(debt.productName) === debtNameKey(line.label),
+    // Last resort: both the product and the amount changed, but the entry still
+    // belongs to this report, so keeping its payments is better than losing them.
+    () => true,
+  ];
+
+  for (const matches of passes) {
+    for (let index = 0; index < openLines.length; index += 1) {
+      const line = openLines[index];
+      const found = remaining.findIndex((debt) => matches(debt, line));
+      if (found < 0) continue;
+      pairs.push({ debt: remaining[found], line });
+      remaining.splice(found, 1);
+      openLines.splice(index, 1);
+      index -= 1;
+    }
+  }
+
+  const updates: ReportDebtChange["updates"] = [];
+  for (const { debt, line } of pairs) {
+    const productName = line.label.trim() || debt.productName;
+    const changed =
+      debt.productName !== productName ||
+      debt.amountPaise !== line.amountPaise ||
+      debt.debtDate !== input.nextDate;
+    if (!changed) continue;
+    updates.push({
+      id: debt.id,
+      productName,
+      amountPaise: line.amountPaise,
+      debtDate: input.nextDate,
+    });
+  }
+
+  return {
+    updates,
+    creates: openLines.map((line) => ({
+      productName: line.label.trim() || "Credit sale item",
+      amountPaise: line.amountPaise,
+      debtDate: input.nextDate,
+    })),
+    voids: remaining.map((debt) => ({
+      id: debt.id,
+      productName: debt.productName,
+      amountPaise: debt.amountPaise,
+      paymentCount: debt.payments.length,
+      paidPaise: debtPaidPaise(debt),
+    })),
+  };
+}
+
+/**
  * The Firestore document written when an admin adds a branch.
  *
  * `firestore.rules` validates a string whenever an optional key is present, so

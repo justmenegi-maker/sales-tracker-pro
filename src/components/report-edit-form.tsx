@@ -9,7 +9,12 @@ import { Label } from "@/components/ui/label";
 import { MoneyInput } from "@/components/ui/money-input";
 import { formatINR } from "@/lib/format";
 import { computeTotalSale } from "@/lib/totals";
-import { LINE_CATEGORY_META, makeId } from "@/lib/report";
+import {
+  LINE_CATEGORY_META,
+  makeId,
+  planReportDebtSync,
+  reportDebtRows,
+} from "@/lib/report";
 import type { LineCategory, ReportSummary } from "@/lib/report";
 import { useAppStore } from "@/lib/store";
 
@@ -43,7 +48,7 @@ export function ReportEditForm({
   summary: ReportSummary;
   onCancel: () => void;
 }) {
-  const { updateReport } = useAppStore();
+  const { updateReport, debts, reports } = useAppStore();
   const { report } = summary;
 
   const [reportDate, setReportDate] = useState(report.reportDate);
@@ -52,6 +57,42 @@ export function ReportEditForm({
   const [note, setNote] = useState(report.note ?? "");
   const [lines, setLines] = useState<DraftLine[]>(() => toDrafts(summary));
   const [saving, setSaving] = useState(false);
+  const [confirmedRemovalKey, setConfirmedRemovalKey] = useState<string | null>(
+    null,
+  );
+
+  // Preview of the ledger work this correction will do, computed with the same
+  // planner the save uses: a debt row turned into an expense must stop being a
+  // debt, and an admin should see that before saving.
+  const debtPlan = useMemo(
+    () =>
+      planReportDebtSync({
+        branchId: report.branchId,
+        previousDate: report.reportDate,
+        previousDebtLines: reportDebtRows(report.lines),
+        otherDebtReportsOnDate: reports.filter(
+          (entry) =>
+            entry.id !== report.id &&
+            entry.status === "active" &&
+            entry.branchId === report.branchId &&
+            entry.reportDate === report.reportDate &&
+            entry.lines.some((line) => line.category === "debt"),
+        ).length,
+        nextDate: reportDate,
+        debtLines: reportDebtRows(lines),
+        ledger: debts,
+      }),
+    [debts, lines, report, reportDate, reports],
+  );
+  const paidRemovals = debtPlan.voids.filter((entry) => entry.paymentCount > 0);
+  const paidRemovalKey = paidRemovals
+    .map((entry) => `${entry.id}:${entry.amountPaise}`)
+    .join("|");
+  // A tick belongs to the removals it was shown for. Editing the report into a
+  // different set of paid removals must ask again instead of carrying the tick.
+  const removalConfirmed =
+    paidRemovalKey !== "" && confirmedRemovalKey === paidRemovalKey;
+  const needsRemovalConfirmation = paidRemovals.length > 0 && !removalConfirmed;
 
   const sections = useMemo(() => {
     const base = {
@@ -88,24 +129,39 @@ export function ReportEditForm({
 
   async function save() {
     setSaving(true);
-    const result = await updateReport(report.id, {
-      reportDate,
-      cashPaise,
-      onlinePaise,
-      note: note.trim() ? note.trim() : null,
-      lines: lines.map((line) => ({
-        category: line.category,
-        label: line.label,
-        amountPaise: line.amountPaise,
-      })),
-    });
+    const result = await updateReport(
+      report.id,
+      {
+        reportDate,
+        cashPaise,
+        onlinePaise,
+        note: note.trim() ? note.trim() : null,
+        lines: lines.map((line) => ({
+          category: line.category,
+          label: line.label,
+          amountPaise: line.amountPaise,
+        })),
+      },
+      { confirmDebtRemoval: removalConfirmed },
+    );
     setSaving(false);
 
     if (!result.ok) {
       toast.error(result.error ?? "Could not save the correction.");
       return;
     }
-    toast.success("Report corrected. The change is stamped with your name.");
+
+    const sync = result.debtSync;
+    const changed = sync ? sync.updated + sync.created + sync.voided : 0;
+    if (sync && changed > 0) {
+      const parts: string[] = [];
+      if (sync.updated > 0) parts.push(`${sync.updated} updated`);
+      if (sync.created > 0) parts.push(`${sync.created} added`);
+      if (sync.voided > 0) parts.push(`${sync.voided} voided`);
+      toast.success(`Report corrected. Debt ledger synced: ${parts.join(", ")}.`);
+    } else {
+      toast.success("Report corrected. The change is stamped with your name.");
+    }
     onCancel();
   }
 
@@ -218,6 +274,43 @@ export function ReportEditForm({
         })}
       </div>
 
+      {debtPlan.voids.length > 0 ? (
+        <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900">
+          <p className="font-medium">
+            This correction voids {debtPlan.voids.length} debt{" "}
+            {debtPlan.voids.length === 1 ? "entry" : "entries"} in the ledger
+          </p>
+          <ul className="list-disc space-y-0.5 pl-4">
+            {debtPlan.voids.map((entry) => (
+              <li key={entry.id}>
+                {entry.productName} — {formatINR(entry.amountPaise)}
+                {entry.paymentCount > 0
+                  ? ` (${formatINR(entry.paidPaise)} already collected)`
+                  : null}
+              </li>
+            ))}
+          </ul>
+          {paidRemovals.length > 0 ? (
+            <label className="flex items-start gap-2 pt-1">
+              <input
+                type="checkbox"
+                checked={removalConfirmed}
+                onChange={(event) =>
+                  setConfirmedRemovalKey(
+                    event.target.checked ? paidRemovalKey : null,
+                  )
+                }
+                className="mt-0.5"
+              />
+              <span>
+                I understand the payments already recorded on these debts stay in the
+                audit trail but stop counting in the ledger.
+              </span>
+            </label>
+          ) : null}
+        </div>
+      ) : null}
+
       <div className="bg-muted/50 space-y-1.5 rounded-md px-3 py-2">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <span className="text-muted-foreground text-sm">New Total Sale</span>
@@ -238,7 +331,7 @@ export function ReportEditForm({
       </div>
 
       <div className="flex flex-wrap gap-2">
-        <Button disabled={saving} onClick={() => void save()}>
+        <Button disabled={saving || needsRemovalConfirmation} onClick={() => void save()}>
           {saving ? "Saving…" : "Save correction"}
         </Button>
         <Button variant="outline" disabled={saving} onClick={onCancel}>

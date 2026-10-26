@@ -28,6 +28,7 @@ import {
   setDoc,
   updateDoc,
   where,
+  writeBatch,
   type DocumentData,
   type DocumentSnapshot,
 } from "firebase/firestore";
@@ -56,6 +57,8 @@ import {
   buildBranchDocument,
   buildReportEditPayload,
   makeId,
+  planReportDebtSync,
+  reportDebtRows,
   resolveFilingBranch,
 } from "./report";
 import type {
@@ -106,6 +109,32 @@ export type ActionResult = {
   error: string | null;
 };
 
+/** What a correction changed in the debt ledger, so the UI can report it. */
+export type ReportDebtSyncSummary = {
+  updated: number;
+  created: number;
+  voided: number;
+};
+
+export type ReportEditResult = ActionResult & {
+  debtSync?: ReportDebtSyncSummary;
+};
+
+/** A debt entry that a voided report takes out of the ledger. */
+export type ReportVoidDebt = {
+  productName: string;
+  amountPaise: number;
+  paymentCount: number;
+  paidPaise: number;
+};
+
+export type ReportVoidResult = ActionResult & {
+  /** Ledger entries voided with the report (or blocked pending confirmation). */
+  debtVoids?: ReportVoidDebt[];
+  /** The void needs a second, explicit confirmation because payments exist. */
+  needsConfirmation?: boolean;
+};
+
 type StoreValue = {
   ready: boolean;
   backend: "firebase";
@@ -122,12 +151,29 @@ type StoreValue = {
   signInWithGoogle: () => Promise<boolean>;
   signOut: () => Promise<void>;
   saveReport: (input: SaveReportInput) => Promise<FileReportResult>;
-  voidReport: (reportId: string, reason: string) => Promise<ActionResult>;
-  /** Admin correction of a filed report (amounts, rows, date or note). */
+  /**
+   * Void a report and the debt ledger entries it created, in one write.
+   *
+   * A void that would drop a debt entry with payments on it is refused until
+   * the admin confirms, so collected money is never silently discarded.
+   */
+  voidReport: (
+    reportId: string,
+    reason: string,
+    options?: { confirmDebtRemoval?: boolean },
+  ) => Promise<ReportVoidResult>;
+  /**
+   * Admin correction of a filed report (amounts, rows, date or note).
+   *
+   * The debt ledger is reconciled in the same write, so a debt row turned into
+   * an expense stops counting as a debt. `confirmDebtRemoval` is the admin's
+   * acknowledgement when a removed ledger entry already has payments on it.
+   */
   updateReport: (
     reportId: string,
     input: ReportEditInput,
-  ) => Promise<ActionResult>;
+    options?: { confirmDebtRemoval?: boolean },
+  ) => Promise<ReportEditResult>;
   setReportReview: (
     reportId: string,
     status: ReviewStatus,
@@ -926,7 +972,11 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   );
 
   const voidReport = useCallback(
-    async (reportId: string, reason: string): Promise<ActionResult> => {
+    async (
+      reportId: string,
+      reason: string,
+      options?: { confirmDebtRemoval?: boolean },
+    ): Promise<ReportVoidResult> => {
       setError(null);
       if (session?.role !== "admin") {
         const message = "Only admins can void a filed report.";
@@ -934,12 +984,83 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         return { ok: false, error: message };
       }
 
+      let previous: DocumentData | null = null;
       try {
-        await updateDoc(doc(db, "reports", reportId), {
-          status: "voided",
-          voidReason: reason,
-        });
-        return { ok: true, error: null };
+        const snapshot = await getDoc(doc(db, "reports", reportId));
+        previous = snapshot.exists() ? snapshot.data() : null;
+      } catch (err) {
+        const message = firestoreErrorMessage(
+          err,
+          OperationType.GET,
+          `reports/${reportId}`,
+          "read this report before voiding it",
+        );
+        setError(message);
+        return { ok: false, error: message };
+      }
+
+      if (!previous) {
+        const message = "That report is no longer in the system.";
+        setError(message);
+        return { ok: false, error: message };
+      }
+      if (previous.status === "voided") {
+        const message = "That report is already voided.";
+        setError(message);
+        return { ok: false, error: message };
+      }
+
+      // Voiding the report must also take its debt rows out of the ledger, or
+      // the owner still sees money owed for a day that no longer counts.
+      const debtPlan = planReportDebtSync({
+        branchId: previous.branchId,
+        previousDate: previous.reportDate,
+        previousDebtLines: reportDebtRows(
+          Array.isArray(previous.lines) ? previous.lines : [],
+        ),
+        otherDebtReportsOnDate: reports.filter(
+          (report) =>
+            report.id !== reportId &&
+            report.status === "active" &&
+            report.branchId === previous?.branchId &&
+            report.reportDate === previous?.reportDate &&
+            report.lines.some((line) => line.category === "debt"),
+        ).length,
+        nextDate: previous.reportDate,
+        // No debt rows left: every ledger entry that belongs to this report is
+        // a leftover the void has to remove.
+        debtLines: [],
+        ledger: debts,
+      });
+
+      const debtVoids = debtPlan.voids.map((entry) => ({
+        productName: entry.productName,
+        amountPaise: entry.amountPaise,
+        paymentCount: entry.paymentCount,
+        paidPaise: entry.paidPaise,
+      }));
+      const paidVoids = debtVoids.filter((entry) => entry.paymentCount > 0);
+      if (paidVoids.length > 0 && !options?.confirmDebtRemoval) {
+        return {
+          ok: false,
+          error: `${paidVoids.length} debt entr${paidVoids.length === 1 ? "y" : "ies"} linked to this report already ${paidVoids.length === 1 ? "has" : "have"} payments recorded. Confirm the void to remove the remaining balance from the ledger.`,
+          needsConfirmation: true,
+          debtVoids,
+        };
+      }
+
+      const batch = writeBatch(db);
+      batch.update(doc(db, "reports", reportId), {
+        status: "voided",
+        voidReason: reason,
+      });
+      for (const entry of debtPlan.voids) {
+        batch.update(doc(db, "debts", entry.id), { voided: true });
+      }
+
+      try {
+        await batch.commit();
+        return { ok: true, error: null, debtVoids };
       } catch (err) {
         const message = firestoreErrorMessage(
           err,
@@ -951,14 +1072,15 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         return { ok: false, error: message };
       }
     },
-    [session],
+    [debts, reports, session],
   );
 
   const updateReport = useCallback(
     async (
       reportId: string,
       input: ReportEditInput,
-    ): Promise<ActionResult> => {
+      options?: { confirmDebtRemoval?: boolean },
+    ): Promise<ReportEditResult> => {
       setError(null);
       if (session?.role !== "admin") {
         const message = "Only admins can edit a filed report.";
@@ -966,19 +1088,105 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         return { ok: false, error: message };
       }
 
+      const editedAt = new Date().toISOString();
       const { data, error } = buildReportEditPayload(
         input,
         session.displayName || "Admin",
-        new Date().toISOString(),
+        editedAt,
       );
       if (error) {
         setError(error);
         return { ok: false, error };
       }
 
+      // The correction must also move the debt ledger: a debt row changed into
+      // an expense used to stay behind as a phantom debt.
+      let previous: DocumentData | null = null;
       try {
-        await updateDoc(doc(db, "reports", reportId), data);
-        return { ok: true, error: null };
+        const snapshot = await getDoc(doc(db, "reports", reportId));
+        previous = snapshot.exists() ? snapshot.data() : null;
+      } catch (err) {
+        const message = firestoreErrorMessage(
+          err,
+          OperationType.GET,
+          `reports/${reportId}`,
+          "read this report before correcting it",
+        );
+        setError(message);
+        return { ok: false, error: message };
+      }
+
+      if (!previous) {
+        const message = "That report is no longer in the system.";
+        setError(message);
+        return { ok: false, error: message };
+      }
+
+      const debtPlan = planReportDebtSync({
+        branchId: previous.branchId,
+        previousDate: previous.reportDate,
+        previousDebtLines: reportDebtRows(
+          Array.isArray(previous.lines) ? previous.lines : [],
+        ),
+        otherDebtReportsOnDate: reports.filter(
+          (report) =>
+            report.id !== reportId &&
+            report.status === "active" &&
+            report.branchId === previous?.branchId &&
+            report.reportDate === previous?.reportDate &&
+            report.lines.some((line) => line.category === "debt"),
+        ).length,
+        nextDate: input.reportDate,
+        debtLines: reportDebtRows(input.lines),
+        ledger: debts,
+      });
+
+      const paidVoids = debtPlan.voids.filter((entry) => entry.paymentCount > 0);
+      if (paidVoids.length > 0 && !options?.confirmDebtRemoval) {
+        const message = `${paidVoids.length} debt entr${paidVoids.length === 1 ? "y" : "ies"} removed by this correction already ${paidVoids.length === 1 ? "has" : "have"} payments recorded. Confirm the removal before saving.`;
+        setError(message);
+        return { ok: false, error: message };
+      }
+
+      const batch = writeBatch(db);
+      batch.update(doc(db, "reports", reportId), data);
+
+      for (const entry of debtPlan.updates) {
+        batch.update(doc(db, "debts", entry.id), {
+          productName: entry.productName,
+          amountPaise: entry.amountPaise,
+          debtDate: entry.debtDate,
+        });
+      }
+      for (const entry of debtPlan.creates) {
+        batch.set(doc(db, "debts", makeId("debt")), {
+          branchId: previous.branchId,
+          productName: entry.productName,
+          amountPaise: entry.amountPaise,
+          debtDate: entry.debtDate,
+          source: "report" as const,
+          voided: false,
+          payments: [],
+          createdAt: editedAt,
+        });
+      }
+      for (const entry of debtPlan.voids) {
+        // `voided` is the one soft-delete flag the security rules allow here;
+        // the report itself records who corrected it and when.
+        batch.update(doc(db, "debts", entry.id), { voided: true });
+      }
+
+      try {
+        await batch.commit();
+        return {
+          ok: true,
+          error: null,
+          debtSync: {
+            updated: debtPlan.updates.length,
+            created: debtPlan.creates.length,
+            voided: debtPlan.voids.length,
+          },
+        };
       } catch (err) {
         const message = firestoreErrorMessage(
           err,
@@ -990,7 +1198,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         return { ok: false, error: message };
       }
     },
-    [session],
+    [debts, reports, session],
   );
 
   const setReportReview = useCallback(

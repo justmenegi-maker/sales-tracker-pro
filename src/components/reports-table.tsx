@@ -66,24 +66,40 @@ export function ReportsTable({
   const [flagFirst, setFlagFirst] = useState(false);
   const [voidingFor, setVoidingFor] = useState<string | null>(null);
   const [reason, setReason] = useState("");
+  /** Set when the void would drop a debt entry that already has payments. */
+  const [voidNeedsConfirmation, setVoidNeedsConfirmation] = useState(false);
+  const [voidWarning, setVoidWarning] = useState<string | null>(null);
   const [visible, setVisible] = useState(limit);
   const [saving, setSaving] = useState(false);
 
   const openSummary =
     summaries.find((summary) => summary.report.id === openId) ?? null;
 
-  async function confirmVoid(reportId: string) {
+  async function confirmVoid(reportId: string, confirmed: boolean) {
     if (reason.trim().length < 3) {
       toast.error("Give a short reason for voiding this report.");
       return;
     }
     setSaving(true);
-    const result = await voidReport(reportId, reason.trim());
+    const result = await voidReport(reportId, reason.trim(), {
+      confirmDebtRemoval: confirmed,
+    });
     setSaving(false);
     if (result.ok) {
-      toast.success("Report voided.");
+      const removed = result.debtVoids?.length ?? 0;
+      toast.success(
+        removed > 0
+          ? `Report voided. ${removed} debt ${removed === 1 ? "entry" : "entries"} removed from the ledger.`
+          : "Report voided.",
+      );
       setVoidingFor(null);
       setReason("");
+      setVoidNeedsConfirmation(false);
+      setVoidWarning(null);
+    } else if (result.needsConfirmation) {
+      // Not an error: show the paid debts and wait for the admin's second click.
+      setVoidNeedsConfirmation(true);
+      setVoidWarning(result.error);
     } else {
       toast.error(result.error ?? "Could not void the report.");
     }
@@ -200,6 +216,8 @@ export function ReportsTable({
                                 voidingFor === report.id ? null : report.id,
                               );
                               setReason("");
+                              setVoidNeedsConfirmation(false);
+                              setVoidWarning(null);
                             }}
                           >
                             Void
@@ -291,13 +309,20 @@ export function ReportsTable({
                             placeholder="e.g. keyed cash twice"
                           />
                         </div>
+                        {voidWarning ? (
+                          <p className="w-full rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-900">
+                            {voidWarning}
+                          </p>
+                        ) : null}
                         <Button
                           size="sm"
                           variant="destructive"
                           disabled={saving}
-                          onClick={() => void confirmVoid(report.id)}
+                          onClick={() =>
+                            void confirmVoid(report.id, voidNeedsConfirmation)
+                          }
                         >
-                          Void report
+                          {voidNeedsConfirmation ? "Void anyway" : "Void report"}
                         </Button>
                       </div>
                     ) : null}

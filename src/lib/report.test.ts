@@ -14,6 +14,8 @@ import {
   deriveAdvanceStatus,
   debtIsOverdue,
   deriveDebtStatus,
+  planReportDebtSync,
+  reportDebtRows,
   reportFinanceCount,
   reportTotalPaise,
   reportsForDate,
@@ -703,5 +705,194 @@ describe("resolveFilingBranch", () => {
     expect(
       resolveFilingBranch({ branchId: "", branches: [kaza], session: null }),
     ).toBeNull();
+  });
+});
+
+describe("planReportDebtSync", () => {
+  it("voids the ledger entry when a debt row becomes an expense", () => {
+    const plan = planReportDebtSync({
+      branchId: "branch_kaza",
+      previousDate: "2026-10-13",
+      previousDebtLines: [{ label: "Ceiling fan", amountPaise: 640000 }],
+      otherDebtReportsOnDate: 0,
+      nextDate: "2026-10-13",
+      debtLines: [],
+      ledger: [debt()],
+    });
+
+    expect(plan.voids).toEqual([
+      {
+        id: "debt_1",
+        productName: "Ceiling fan",
+        amountPaise: 640000,
+        paymentCount: 0,
+        paidPaise: 0,
+      },
+    ]);
+    expect(plan.updates).toEqual([]);
+    expect(plan.creates).toEqual([]);
+  });
+
+  it("rewrites the amount and keeps the payments already on the entry", () => {
+    const plan = planReportDebtSync({
+      branchId: "branch_kaza",
+      previousDate: "2026-10-13",
+      previousDebtLines: [{ label: "Ceiling fan", amountPaise: 640000 }],
+      otherDebtReportsOnDate: 0,
+      nextDate: "2026-10-14",
+      debtLines: [{ label: "Ceiling fan", amountPaise: 600000 }],
+      ledger: [
+        debt({
+          payments: [
+            { id: "p1", amountPaise: 100000, paidOn: "2026-10-14", note: null },
+          ],
+        }),
+      ],
+    });
+
+    expect(plan.updates).toEqual([
+      {
+        id: "debt_1",
+        productName: "Ceiling fan",
+        amountPaise: 600000,
+        debtDate: "2026-10-14",
+      },
+    ]);
+    expect(plan.voids).toEqual([]);
+  });
+
+  it("creates an entry for a debt row added by the correction", () => {
+    const plan = planReportDebtSync({
+      branchId: "branch_kaza",
+      previousDate: "2026-10-13",
+      previousDebtLines: [],
+      otherDebtReportsOnDate: 0,
+      nextDate: "2026-10-13",
+      debtLines: [{ label: "Cooler", amountPaise: 150000 }],
+      ledger: [],
+    });
+
+    expect(plan.creates).toEqual([
+      { productName: "Cooler", amountPaise: 150000, debtDate: "2026-10-13" },
+    ]);
+    expect(plan.voids).toEqual([]);
+  });
+
+  it("matches an entry by the row the report held when the day has other reports", () => {
+    const plan = planReportDebtSync({
+      branchId: "branch_kaza",
+      previousDate: "2026-10-13",
+      previousDebtLines: [{ label: "Ceiling fan", amountPaise: 640000 }],
+      otherDebtReportsOnDate: 1,
+      nextDate: "2026-10-13",
+      debtLines: [{ label: "Ceiling fan", amountPaise: 640000 }],
+      ledger: [debt()],
+    });
+
+    expect(plan).toEqual({ updates: [], creates: [], voids: [] });
+  });
+
+  it("ignores manual debts, voided entries, other branches and other days", () => {
+    const plan = planReportDebtSync({
+      branchId: "branch_kaza",
+      previousDate: "2026-10-13",
+      previousDebtLines: [{ label: "Ceiling fan", amountPaise: 640000 }],
+      otherDebtReportsOnDate: 0,
+      nextDate: "2026-10-13",
+      debtLines: [],
+      ledger: [
+        debt({ id: "manual", source: "manual" }),
+        debt({ id: "voided", voided: true }),
+        debt({ id: "spillow", branchId: "branch_spillow" }),
+        debt({ id: "other_day", debtDate: "2026-10-01" }),
+      ],
+    });
+
+    expect(plan.voids).toEqual([]);
+    expect(plan.updates).toEqual([]);
+    expect(plan.creates).toEqual([]);
+  });
+
+  it("flags money already collected on an entry it has to void", () => {
+    const plan = planReportDebtSync({
+      branchId: "branch_kaza",
+      previousDate: "2026-10-13",
+      previousDebtLines: [{ label: "Ceiling fan", amountPaise: 640000 }],
+      otherDebtReportsOnDate: 0,
+      nextDate: "2026-10-13",
+      debtLines: [],
+      ledger: [
+        debt({
+          payments: [
+            { id: "p1", amountPaise: 200000, paidOn: "2026-10-14", note: null },
+          ],
+        }),
+      ],
+    });
+
+    expect(plan.voids[0]).toMatchObject({ paymentCount: 1, paidPaise: 200000 });
+  });
+
+  it("leaves an entry of another report on the same day alone", () => {
+    // Two reports may share a date; correcting one must not void the other's
+    // debt just because it was filed the same day.
+    const plan = planReportDebtSync({
+      branchId: "branch_kaza",
+      previousDate: "2026-10-13",
+      previousDebtLines: [],
+      otherDebtReportsOnDate: 1,
+      nextDate: "2026-10-13",
+      debtLines: [],
+      ledger: [debt({ productName: "Ceiling fan", amountPaise: 640000 })],
+    });
+
+    expect(plan.voids).toEqual([]);
+  });
+
+  it("repairs a lone day whose debt row was already changed into an expense", () => {
+    // The reported bug: the correction was saved before the ledger was synced,
+    // so the report no longer has the row but the ledger still shows the debt.
+    // Re-saving that report voids the leftover entry.
+    const plan = planReportDebtSync({
+      branchId: "branch_kaza",
+      previousDate: "2026-10-13",
+      previousDebtLines: [],
+      otherDebtReportsOnDate: 0,
+      nextDate: "2026-10-13",
+      debtLines: [],
+      ledger: [debt()],
+    });
+
+    expect(plan.voids.map((entry) => entry.id)).toEqual(["debt_1"]);
+  });
+
+  it("returns no work when the debt rows did not change", () => {
+    const plan = planReportDebtSync({
+      branchId: "branch_kaza",
+      previousDate: "2026-10-13",
+      previousDebtLines: [{ label: "Ceiling fan", amountPaise: 640000 }],
+      otherDebtReportsOnDate: 0,
+      nextDate: "2026-10-13",
+      debtLines: [{ label: "Ceiling fan", amountPaise: 640000 }],
+      ledger: [debt()],
+    });
+
+    expect(plan).toEqual({ updates: [], creates: [], voids: [] });
+  });
+});
+
+describe("reportDebtRows", () => {
+  it("keeps only debt rows, drops zero amounts and names blank rows", () => {
+    expect(
+      reportDebtRows([
+        { category: "debt", label: "Cooler", amountPaise: 150000 },
+        { category: "debt", label: "", amountPaise: 25000 },
+        { category: "debt", label: "Zero", amountPaise: 0 },
+        { category: "expense", label: "Rent", amountPaise: 500000 },
+      ]),
+    ).toEqual([
+      { label: "Cooler", amountPaise: 150000 },
+      { label: "Credit sale item", amountPaise: 25000 },
+    ]);
   });
 });

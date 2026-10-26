@@ -64,8 +64,12 @@ Branch staff still cannot edit a filed report. An admin opens the report from th
 review queue and presses **Edit**: date, cash, online, line items and the note
 become editable, and Saving stamps `editedByName` / `editedAt` on the report.
 The totals are recomputed before the save and non-numeric or negative amounts are
-refused. Debt rows in the debt ledger are separate documents, so a correction to
-a report's debt line does not rewrite its ledger entry.
+refused. Debt rows in the debt ledger are separate documents, so the correction
+reconciles them in the same write: a changed amount or date updates the entry
+and keeps the payments already recorded against it, a debt row changed into
+another category voids the entry, and a newly added debt row creates one. When a
+removed entry already has payments, the admin sees each entry and must tick a
+confirmation before the save is allowed.
 
 ## Reviewing a day
 
@@ -78,6 +82,16 @@ concern** with a note. New reports start as `pending`, so the admin view always
 shows a review queue; a flagged note is visible to the branch too. Reviewing
 never edits a branch's numbers: `status` (active/voided) and the review state are
 separate fields.
+
+## Voiding a report
+
+Voiding is a soft delete: the report keeps its `voided` status and the reason,
+so it stays readable in the admin audit view while dropping out of every total
+and chart. The debt entries the report created are voided in
+the same write, so a voided day cannot leave money owed behind in the ledger. If
+one of those entries already has a payment, the admin first sees a warning
+naming the collected amount and has to press **Void anyway** to confirm; the
+payments themselves stay on the entry for the audit trail.
 
 ## Sales PDF export
 
