@@ -26,7 +26,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { StatTile } from "@/components/ui/stat-tile";
-import { addDays, formatDateLabel, formatINRWhole, todayISO } from "@/lib/format";
+import {
+  addDays,
+  formatDateLabel,
+  formatINRWhole,
+  formatINRWholeSigned,
+  todayISO,
+} from "@/lib/format";
 import {
   REVIEW_META,
   debtOutstandingPaise,
@@ -127,6 +133,12 @@ function AdminBody() {
 
   const rangeTotal = useMemo(
     () => inRange.reduce((sum, summary) => sum + summary.totalPaise, 0),
+    [inRange],
+  );
+
+  // Money paid out, tracked beside Total Sale and never inside it.
+  const rangeExpense = useMemo(
+    () => inRange.reduce((sum, summary) => sum + summary.expensePaise, 0),
     [inRange],
   );
 
@@ -347,6 +359,11 @@ function AdminBody() {
                 value={formatINRWhole(rangeTotal)}
                 hint={`${inRange.length} reports filed`}
                 tone="primary"
+              />
+              <StatTile
+                label="Expense in range"
+                value={formatINRWhole(rangeExpense)}
+                hint={`Net in hand ${formatINRWholeSigned(rangeTotal - rangeExpense)}`}
               />
               <StatTile
                 label="Needs review"

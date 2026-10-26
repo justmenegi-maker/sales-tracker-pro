@@ -118,6 +118,44 @@ describe("buildRangeSales", () => {
     expect(range.sectionTotals.finance).toBe(15_000);
   });
 
+  it("sums expenses beside Total Sale without adding them to it", () => {
+    const withExpenses = [
+      summary({
+        id: "x",
+        reportDate: "2026-10-20",
+        cashPaise: 30_000,
+        lines: [
+          { id: "e1", category: "expense", label: "Electricity", amountPaise: 4_500 },
+          { id: "e2", category: "expense", label: "Tea", amountPaise: 500 },
+        ],
+      }),
+      summary({
+        id: "y",
+        reportDate: "2026-10-21",
+        cashPaise: 7_000,
+        lines: [
+          { id: "e3", category: "expense", label: "Repairs", amountPaise: 2_000 },
+        ],
+      }),
+      summary({
+        id: "void-expense",
+        reportDate: "2026-10-22",
+        cashPaise: 1_000,
+        status: "voided",
+        lines: [
+          { id: "e4", category: "expense", label: "Voided", amountPaise: 9_000 },
+        ],
+      }),
+    ];
+
+    const range = buildRangeSales(withExpenses, "2026-10-20", "2026-10-22");
+
+    expect(range.totalPaise).toBe(37_000);
+    expect(range.expensePaise).toBe(7_000);
+    expect(range.reportCount).toBe(2);
+    expect(range.sectionTotals).not.toHaveProperty("expense");
+  });
+
   it("builds a six-month trend ending in the range month", () => {
     const range = buildRangeSales(summaries, "2026-10-01", "2026-10-05");
 

@@ -20,6 +20,7 @@ import {
   formatDateLabel,
   formatINR,
   formatINRCompact,
+  formatINRSigned,
   formatWeekdayShort,
 } from "@/lib/format";
 import {
@@ -271,7 +272,7 @@ export function ReportDetail({
                 <div className="flex items-baseline justify-between gap-3">
                   <dt className="font-medium">Net in hand</dt>
                   <dd className="tnum font-medium">
-                    {formatINR(totalPaise - summary.expensePaise)}
+                    {formatINRSigned(totalPaise - summary.expensePaise)}
                   </dd>
                 </div>
               </dl>

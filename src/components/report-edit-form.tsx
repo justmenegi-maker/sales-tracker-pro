@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MoneyInput } from "@/components/ui/money-input";
-import { formatINR } from "@/lib/format";
+import { formatINR, formatINRSigned } from "@/lib/format";
 import { computeTotalSale } from "@/lib/totals";
 import {
   LINE_CATEGORY_META,
@@ -325,7 +325,7 @@ export function ReportEditForm({
         <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
           <span className="font-medium">Net in hand</span>
           <span className="tnum font-medium">
-            {formatINR(total - expenseTotal)}
+            {formatINRSigned(total - expenseTotal)}
           </span>
         </div>
       </div>

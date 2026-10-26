@@ -48,6 +48,12 @@ export type RangeSales = {
   lowestDay: DailySalePoint | null;
   branchSlices: BranchSaleSlice[];
   sectionTotals: Record<SectionKey, number>;
+  /**
+   * Money paid out on the same active reports. Kept beside `totalPaise` and
+   * never inside it, exactly like the report form: `totalPaise - expensePaise`
+   * is the cash actually left in hand for the range.
+   */
+  expensePaise: number;
   /** Last six months ending with the range's end month. */
   monthlyTrend: MonthlySalePoint[];
   /** Reports in range that were voided and therefore excluded. */
@@ -187,6 +193,7 @@ export function buildRangeSales(
   const branchSlices = new Map<string, BranchSaleSlice>();
   const sectionTotals = emptySections();
   let totalPaise = 0;
+  let expensePaise = 0;
   let reportCount = 0;
 
   for (const summary of inRange) {
@@ -198,6 +205,7 @@ export function buildRangeSales(
     }
 
     totalPaise += summary.totalPaise;
+    expensePaise += summary.expensePaise;
     reportCount += 1;
 
     for (const key of Object.keys(sectionTotals) as SectionKey[]) {
@@ -240,6 +248,7 @@ export function buildRangeSales(
       (a, b) => b.totalPaise - a.totalPaise,
     ),
     sectionTotals,
+    expensePaise,
     monthlyTrend: monthlyTrendFor(summaries, end),
     voidedCount,
     reports: [...inRange].sort((a, b) =>

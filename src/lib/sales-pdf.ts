@@ -311,7 +311,10 @@ function drawSummaryCards(state: DocState, range: RangeSales) {
     {
       label: "TOTAL SALE",
       value: money(range.totalPaise),
-      hint: `${range.reportCount} report${range.reportCount === 1 ? "" : "s"} in range`,
+      hint:
+        range.expensePaise > 0
+          ? `${money(range.totalPaise - range.expensePaise)} net after expenses`
+          : `${range.reportCount} report${range.reportCount === 1 ? "" : "s"} in range`,
       tone: INK,
     },
     {
@@ -589,6 +592,41 @@ function drawSectionMix(state: DocState, range: RangeSales) {
     });
     state.y += rowHeight;
   });
+
+  // Expenses are money out: shown beside the mix, never as a slice of it.
+  if (range.expensePaise > 0) {
+    ensureSpace(state, 18, "Sales performance report");
+    setColor(doc, BORDER, "draw");
+    doc.setLineWidth(0.2);
+    doc.line(MARGIN, state.y + 1, PAGE_WIDTH - MARGIN, state.y + 1);
+    state.y += 4;
+
+    text(doc, "Expenses paid out", MARGIN, state.y + 4, {
+      size: 8,
+      color: TEXT,
+    });
+    text(doc, "Not part of Total Sale", trackX + trackWidth + 4, state.y + 4, {
+      size: 7,
+      color: MUTED,
+    });
+    text(doc, money(range.expensePaise), PAGE_WIDTH - MARGIN, state.y + 4, {
+      size: 8,
+      style: "bold",
+      color: RED,
+      align: "right",
+    });
+    state.y += 6.4;
+
+    text(doc, "Net in hand", MARGIN, state.y + 4, { size: 8, color: MUTED });
+    text(
+      doc,
+      money(range.totalPaise - range.expensePaise),
+      PAGE_WIDTH - MARGIN,
+      state.y + 4,
+      { size: 8, style: "bold", color: INK_DARK, align: "right" },
+    );
+    state.y += 6.4;
+  }
 
   state.y += 6;
 }

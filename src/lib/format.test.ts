@@ -4,7 +4,9 @@ import {
   formatDateLabel,
   formatINR,
   formatINRCompact,
+  formatINRSigned,
   formatINRWhole,
+  formatINRWholeSigned,
   formatWeekdayShort,
   parseRupeesToPaise,
 } from "./format";
@@ -36,6 +38,16 @@ describe("formatINR", () => {
     expect(formatINRCompact(12500000)).toBe("₹1.3L");
     expect(formatINRCompact(7190000)).toBe("₹71.9k");
     expect(formatINRCompact(48000)).toBe("₹480");
+  });
+
+  it("formats a derived net, including when expenses exceed the sale", () => {
+    expect(formatINRSigned(125055)).toContain("1,250.55");
+    expect(formatINRSigned(0)).toContain("0.00");
+    expect(formatINRSigned(-400000)).toBe("-₹4,000.00");
+    expect(formatINRWholeSigned(-400055)).toBe("-₹4,001");
+    expect(formatINRWholeSigned(125055)).toContain("1,251");
+    expect(() => formatINRSigned(12.5)).toThrow(/integer paise/);
+    expect(() => formatINRSigned(Number.NaN)).toThrow(/integer paise/);
   });
 });
 

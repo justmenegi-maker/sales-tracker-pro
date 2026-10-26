@@ -25,6 +25,18 @@ the report sheet as *Description / note*, and listed in the PDF export as a
 **Daily notes** section, so the reason behind a day never lives only in someone's
 head.
 
+## Expenses (money out)
+
+An **Expense** section sits directly above *Others* in the daily report form, for
+money the shop paid out that day (electricity, repairs, tea). Expense rows are
+stored as ordinary `lines` with `category: "expense"`, but they are the one
+category that is **never** added to Total Sale: the form shows the running
+total, the expense subtotal and the resulting **Net in hand** separately. The
+report sheet shows the same split, and voiding a report removes its expenses
+from every total with it. The admin overview's *Expense in range* tile sums the
+active reports in the selected range, and the PDF export lists expenses and net
+in hand below the section mix — clearly marked as outside Total Sale.
+
 ## Advance ledger
 
 Money a customer pays before the item is handed over lives in its own ledger
@@ -99,8 +111,8 @@ The admin overview has an **Export sales report** card with three ranges —
 *Weekly* (last 7 days), *Monthly* (this month to date) and *Custom* (two dates) —
 scoped to the branch filter above it. The PDF (`src/lib/sales-pdf.ts`) contains
 the daily bar chart with the best day highlighted, a six-month monthly bar
-chart, best and lowest sale days with their share of the range, the section mix,
-a branch breakdown, a day-by-day ledger that marks missing filings, and the
+chart, best and lowest sale days with their share of the range, the section mix plus
+expenses and net in hand, a branch breakdown, a day-by-day ledger that marks missing filings, and the
 admin review status with every flagged concern. Voided reports are excluded and
 called out in the header. `buildRangeSales` in `src/lib/sales-analytics.ts`
 computes every figure once for both the preview and the PDF; best/lowest are

@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MoneyInput } from "@/components/ui/money-input";
 import { OfflineSaleForm } from "@/components/offline-sales";
-import { formatINR, formatDateLabel, todayISO } from "@/lib/format";
+import { formatINR, formatINRSigned, formatDateLabel, todayISO } from "@/lib/format";
 import {
   LINE_CATEGORY_META,
   SECTION_META,
@@ -394,7 +394,7 @@ export function ReportForm() {
               </div>
               <div className="flex items-baseline justify-between gap-3">
                 <dt className="font-medium">Net in hand</dt>
-                <dd className="tnum font-semibold">{formatINR(netInHand)}</dd>
+                <dd className="tnum font-semibold">{formatINRSigned(netInHand)}</dd>
               </div>
             </dl>
             <Button

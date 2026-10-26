@@ -30,6 +30,36 @@ export function formatINRWhole(paise: number): string {
   return inrWhole.format(assertNonNegativePaise(paise) / 100);
 }
 
+/**
+ * -₹1,250.55 for a *derived* figure that may fall below zero, such as net in
+ * hand when a day's expenses are larger than its sale.
+ *
+ * Stored amounts are never negative, so `formatINR` rejects them; a net is
+ * arithmetic on two stored amounts and is allowed to be negative.
+ */
+export function formatINRSigned(paise: number): string {
+  if (
+    typeof paise !== "number" ||
+    !Number.isFinite(paise) ||
+    !Number.isInteger(paise)
+  ) {
+    throw new Error("net amount must be an integer paise amount");
+  }
+  return inr.format(paise / 100);
+}
+
+/** -₹4,001 — the whole-rupee twin of `formatINRSigned`, for dashboard tiles. */
+export function formatINRWholeSigned(paise: number): string {
+  if (
+    typeof paise !== "number" ||
+    !Number.isFinite(paise) ||
+    !Number.isInteger(paise)
+  ) {
+    throw new Error("net amount must be an integer paise amount");
+  }
+  return inrWhole.format(paise / 100);
+}
+
 /** ₹1.25L / ₹12.5k / ₹480 — for compact dashboard tiles. */
 export function formatINRCompact(paise: number): string {
   const rupees = assertNonNegativePaise(paise) / 100;

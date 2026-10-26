@@ -80,6 +80,28 @@ describe("sales PDF", () => {
     expect(filename).toBe("sk-tapri-sales-2026-10-01-to-2026-10-31-all-branches.pdf");
   });
 
+  it("prints expenses and net in hand without touching Total Sale", async () => {
+    const withExpenses = summarizeReports([
+      report({
+        lines: [
+          { id: "l1", category: "expense", label: "Repairs", amountPaise: 9_000 },
+        ],
+      }),
+    ]);
+    const range = buildRangeSales(withExpenses, "2026-10-01", "2026-10-07");
+
+    expect(range.totalPaise).toBe(35_000);
+    expect(range.expensePaise).toBe(9_000);
+
+    const { doc } = await buildSalesPdf({
+      range,
+      scopeLabel: "SK Kaza",
+      generatedAt: new Date("2026-10-17T10:00:00.000Z"),
+    });
+
+    expect(doc.getNumberOfPages()).toBeGreaterThanOrEqual(2);
+  });
+
   it("does not throw for a range with no reports", async () => {
     const range = buildRangeSales(summaries, "2026-12-01", "2026-12-07");
     const { doc } = await buildSalesPdf({
