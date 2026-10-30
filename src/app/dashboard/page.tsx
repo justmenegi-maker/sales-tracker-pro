@@ -4,15 +4,17 @@ import { useMemo, useState } from "react";
 import { AdvanceLedger } from "@/components/advance-ledger";
 import { AppShell } from "@/components/app-shell";
 import { DebtLedger } from "@/components/debt-ledger";
+import { DoorClosed, DoorOpen } from "lucide-react";
 import { OfflineSaleReminders } from "@/components/offline-sales";
 import { ReportForm } from "@/components/report-form";
 import { ReportsTable } from "@/components/reports-table";
 import { RequireAuth } from "@/components/require-auth";
 import { TrendChart } from "@/components/trend-chart";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatTile } from "@/components/ui/stat-tile";
-import { formatINRWhole, todayISO } from "@/lib/format";
+import { formatDateLabel, formatINRWhole, todayISO } from "@/lib/format";
 import {
   debtOutstandingPaise,
   deriveDebtStatus,
@@ -94,7 +96,8 @@ function DashboardBody() {
 
   const outstanding = debts
     .filter(
-      (debt) => !debt.voided && (!effectiveBranchId || debt.branchId === effectiveBranchId),
+      (debt) =>
+        !debt.voided && (!effectiveBranchId || debt.branchId === effectiveBranchId),
     )
     .filter((debt) => deriveDebtStatus(debt) !== "cleared")
     .reduce((sum, debt) => sum + debtOutstandingPaise(debt), 0);
@@ -164,6 +167,12 @@ function DashboardBody() {
 
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <StatTile
+            label="Shop status today"
+            value={closedToday ? "Closed" : "Open"}
+            hint={closedToday ? "No sale recorded" : "Counting today's Total Sale"}
+            tone={closedToday ? "warning" : "default"}
+          />
+          <StatTile
             label="Today's Total Sale"
             value={formatINRWhole(todayTotal)}
             hint={
@@ -222,6 +231,35 @@ function DashboardBody() {
         <AdvanceLedger branchId={effectiveBranchId} />
       </div>
     </AppShell>
+  );
+}
+
+export function ShopStatusTile({
+  reportDate,
+  isClosed,
+}: {
+  reportDate: string;
+  isClosed: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-2 rounded-md border bg-background/60 p-2.5">
+      {isClosed ? (
+        <DoorClosed className="size-4 text-amber-600" />
+      ) : (
+        <DoorOpen className="size-4 text-emerald-600" />
+      )}
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium">
+          {isClosed ? "Shop closed" : "Shop open"}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          {formatDateLabel(reportDate)}
+        </p>
+      </div>
+      <Badge variant={isClosed ? "outline" : "secondary"}>
+        {isClosed ? "Closed" : "Open"}
+      </Badge>
+    </div>
   );
 }
 

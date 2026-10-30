@@ -2,7 +2,7 @@
 
 import { Fragment, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { DoorClosed, DoorOpen, Plus, Store, Trash2 } from "lucide-react";
+import { DoorClosed, DoorOpen, Plus, Trash2 } from "lucide-react";
 import { AdvanceForm } from "@/components/advance-ledger";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
