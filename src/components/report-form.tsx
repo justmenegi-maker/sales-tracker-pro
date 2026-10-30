@@ -2,7 +2,7 @@
 
 import { Fragment, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { DoorClosed, Plus, Store, Trash2 } from "lucide-react";
+import { DoorClosed, DoorOpen, Plus, Store, Trash2 } from "lucide-react";
 import { AdvanceForm } from "@/components/advance-ledger";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -227,7 +227,7 @@ export function ReportForm() {
                   aria-pressed={!shopClosed}
                   onClick={() => setShopClosed(false)}
                 >
-                  <Store className="size-4" /> Shop open
+                  <DoorOpen className="size-4" /> Shop open
                 </Button>
                 <Button
                   type="button"
