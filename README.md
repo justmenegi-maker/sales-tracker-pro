@@ -40,17 +40,20 @@ in hand below the section mix — clearly marked as outside Total Sale.
 ## Advance ledger
 
 Money a customer pays before the item is handed over lives in its own ledger
-(`advances/{id}`), **not** in Total Sale. The cash already arrived on the advance
-date, so counting it again on the day of the full sale would double it. Each
-entry carries the customer, the item, the amount, the received date and an
-optional note. The entry form sits directly below the **Finance** section of the
-daily report form; the ledger itself follows the report and debt ledgers on the
-dashboard, and the admin portal keeps its own entry form.
+(`advances/{id}`) and stays **out of Total Sale while it is held**. It is counted
+exactly once, on the day it is added to a sale — that day's Total Sale includes
+it, so the money is never counted twice and never lost. Each entry carries the
+customer, the item, the amount, the received date and an optional note. The
+entry form sits directly below the **Finance** section of the daily report form;
+the ledger itself follows the report and debt ledgers on the dashboard, and the
+admin portal keeps its own entry form.
 
-- **Add to sale** records the later date the advance was folded into a filed
-  sale (`appliedOn`). The report sheet for that day shows how much of its Total
-  Sale came from advances received earlier, which is what reconciles the two
-  days.
+- **Add to sale** records the sale date the advance belongs to (`appliedOn`) and
+  **adds the amount to that day's Total Sale** — on the branch's daily tiles, the
+  admin KPIs, the trend charts and the exported PDF. A toast confirms the amount
+  and the day it landed on. Advances belong to the branch's day, not to one
+  report, so two reports on the same date still count the advance once, and the
+  report sheet for that day says how much of the day's sale came from advances.
 - **Refund** appends a refund row (`refunds[]`) with amount, date and reason;
   partial refunds leave the rest held, and the full amount can never be refunded
   twice.

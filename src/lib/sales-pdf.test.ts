@@ -1,8 +1,25 @@
 import { describe, expect, it } from "vitest";
 import { summarizeReports } from "./report";
-import type { DailyReport } from "./report";
+import type { Advance, DailyReport } from "./report";
 import { buildRangeSales } from "./sales-analytics";
 import { buildSalesPdf, salesPdfFilename } from "./sales-pdf";
+
+function advance(overrides: Partial<Advance> = {}): Advance {
+  return {
+    id: "advance_1",
+    branchId: "branch_kaza",
+    customerName: "Imran",
+    itemName: "Ceiling fan",
+    amountPaise: 500_000,
+    advanceDate: "2026-09-28",
+    appliedOn: null,
+    appliedByName: null,
+    refunds: [],
+    note: null,
+    createdAt: "2026-09-28T09:00:00.000Z",
+    ...overrides,
+  };
+}
 
 function report(overrides: Partial<DailyReport> = {}): DailyReport {
   return {
@@ -100,6 +117,25 @@ describe("sales PDF", () => {
     });
 
     expect(doc.getNumberOfPages()).toBeGreaterThanOrEqual(2);
+  });
+
+  it("adds the advance as a ninth slice without breaking the payment mix", async () => {
+    const filed = buildRangeSales(summaries, "2026-10-01", "2026-10-31");
+    const range = buildRangeSales(summaries, "2026-10-01", "2026-10-31", [
+      advance({ amountPaise: 500_000, appliedOn: "2026-10-02" }),
+    ]);
+
+    expect(range.advancePaise).toBe(500_000);
+    expect(range.totalPaise).toBe(filed.totalPaise + 500_000);
+
+    const { doc, filename } = await buildSalesPdf({
+      range,
+      scopeLabel: "All branches",
+    });
+    const output = doc.output();
+    expect(filename).toMatch(/\.pdf$/);
+    expect(output.length).toBeGreaterThan(1_000);
+    expect(output.slice(0, 4)).toBe("%PDF");
   });
 
   it("does not throw for a range with no reports", async () => {

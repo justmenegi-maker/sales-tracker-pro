@@ -278,11 +278,11 @@ export function ReportDetail({
               </dl>
             ) : null}
             {dayAdvances.count > 0 ? (
-              <p className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-900">
-                Includes {formatINR(dayAdvances.totalPaise)} of advance money
-                from {dayAdvances.count} customer
-                {dayAdvances.count === 1 ? "" : "s"} — received earlier and
-                added to this day&apos;s sale in the advance ledger.
+              <p className="mt-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-900">
+                Advance added to {formatDateLabel(report.reportDate)}:{" "}
+                {formatINR(dayAdvances.totalPaise)} from {dayAdvances.count}{" "}
+                customer{dayAdvances.count === 1 ? "" : "s"}. It is counted in
+                that day&apos;s Total Sale, not in this report&apos;s own lines.
               </p>
             ) : null}
           </div>

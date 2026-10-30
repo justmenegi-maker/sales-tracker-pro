@@ -21,7 +21,7 @@ import {
   todayISO,
 } from "@/lib/format";
 import { buildRangeSales, startOfMonth } from "@/lib/sales-analytics";
-import type { ReportSummary } from "@/lib/report";
+import type { Advance, ReportSummary } from "@/lib/report";
 import { cn } from "@/lib/utils";
 
 type Preset = "weekly" | "monthly" | "custom";
@@ -57,10 +57,13 @@ function dayCount(start: string, end: string): number {
 export function SalesExportCard({
   summaries,
   scopeLabel,
+  advances = [],
 }: {
   /** Branch-scoped reports, all dates (not just the dashboard range). */
   summaries: ReportSummary[];
   scopeLabel: string;
+  /** Branch-scoped advances; their applied dates must match `summaries`. */
+  advances?: Advance[];
 }) {
   const today = todayISO();
   const [preset, setPreset] = useState<Preset>("monthly");
@@ -74,8 +77,8 @@ export function SalesExportCard({
       : presetRange(preset, today);
 
   const range = useMemo(
-    () => buildRangeSales(summaries, start, end),
-    [summaries, start, end],
+    () => buildRangeSales(summaries, start, end, advances),
+    [advances, summaries, start, end],
   );
 
   const invalid =
@@ -128,8 +131,9 @@ export function SalesExportCard({
                 Export sales report
               </h2>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                A clean PDF with the daily graph, six-month trend, best and
-                lowest sale day, ledger and review status.
+                A clean PDF with the daily graph, payment-mix donut,
+                six-month trend, best and lowest sale day, ledger and review
+                status.
               </p>
             </div>
           </div>

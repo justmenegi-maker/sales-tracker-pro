@@ -24,7 +24,7 @@ import {
 import { useAppStore } from "@/lib/store";
 
 function DashboardBody() {
-  const { session, reports, debts, branches } = useAppStore();
+  const { session, reports, debts, branches, advances } = useAppStore();
 
   const [activeBranchFilter, setActiveBranchFilter] = useState<string>(
     session?.branchId || "all",
@@ -52,7 +52,11 @@ function DashboardBody() {
     [effectiveBranchId, summaries],
   );
 
-  const totals = useMemo(() => totalsByDate(scoped), [scoped]);
+  // Day totals include advance money an admin added to that day's sale.
+  const totals = useMemo(
+    () => totalsByDate(scoped, advances),
+    [advances, scoped],
+  );
   const trend = useMemo(
     () => trendSeries(totals, 14, today),
     [today, totals],
@@ -64,9 +68,15 @@ function DashboardBody() {
       scoped.filter((summary) => summary.report.reportDate.startsWith(month)),
     [month, scoped],
   );
-  const monthTotal = monthSummaries.reduce(
-    (sum, summary) => sum + summary.totalPaise,
-    0,
+  // Read the month from the same advance-aware day totals, so an advance added
+  // to a sale is counted here exactly like it is on the day tile.
+  const monthTotal = useMemo(
+    () =>
+      [...totals].reduce(
+        (sum, [date, paise]) => (date.startsWith(month) ? sum + paise : sum),
+        0,
+      ),
+    [month, totals],
   );
   const monthFinance = monthSummaries.reduce(
     (sum, summary) => sum + summary.financeCount,

@@ -6,7 +6,8 @@
  * always integer paise; nothing in this module formats money.
  */
 import { addDays } from "./format";
-import type { ReportSummary, SectionKey } from "./report";
+import { advanceAppliedPaise } from "./report";
+import type { Advance, ReportSummary, SectionKey } from "./report";
 
 export type DailySalePoint = {
   date: string;
@@ -54,6 +55,12 @@ export type RangeSales = {
    * is the cash actually left in hand for the range.
    */
   expensePaise: number;
+  /**
+   * Advance money an admin added to a sale inside this range. It is already part
+   * of `totalPaise`; it is reported separately so the export can show where the
+   * money came from.
+   */
+  advancePaise: number;
   /** Last six months ending with the range's end month. */
   monthlyTrend: MonthlySalePoint[];
   /** Reports in range that were voided and therefore excluded. */
@@ -115,19 +122,10 @@ export function startOfMonth(date: string): string {
   return `${monthKey(date)}-01`;
 }
 
-/** Last day of the month containing `date`. */
-export function endOfMonth(date: string): string {
-  const next = shiftMonth(monthKey(date), 1);
-  const [year, month] = next.split("-").map(Number);
-  return addDays(
-    `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-01`,
-    -1,
-  );
-}
-
 /** Daily/monthly series covering last six months ending in the range's month. */
 function monthlyTrendFor(
   summaries: ReportSummary[],
+  advances: Advance[],
   endDate: string,
   months = 6,
 ): MonthlySalePoint[] {
@@ -149,6 +147,15 @@ function monthlyTrendFor(
     bucket.reports += 1;
   }
 
+  for (const advance of advances) {
+    if (!advance.appliedOn) continue;
+    const bucket = byMonth.get(monthKey(advance.appliedOn));
+    if (!bucket) continue;
+    const paise = advanceAppliedPaise(advance);
+    if (paise <= 0) continue;
+    bucket.totalPaise += paise;
+  }
+
   return keys.map((key) => ({
     key,
     label: monthLabel(key),
@@ -167,6 +174,7 @@ export function buildRangeSales(
   summaries: ReportSummary[],
   startDate: string,
   endDate: string,
+  advances: Advance[] = [],
 ): RangeSales {
   const validRange = startDate <= endDate;
   const start = validRange ? startDate : endDate;
@@ -223,6 +231,33 @@ export function buildRangeSales(
     branchSlices.set(summary.report.branchId, branch);
   }
 
+  // Advance money an admin added to a sale counts on the day it was added, so
+  // the range total, the daily series and the branch comparison all agree with
+  // the dashboard.
+  let advancePaise = 0;
+  for (const advance of advances) {
+    if (!advance.appliedOn) continue;
+    if (advance.appliedOn < start || advance.appliedOn > end) continue;
+    const paise = advanceAppliedPaise(advance);
+    if (paise <= 0) continue;
+
+    advancePaise += paise;
+    totalPaise += paise;
+
+    const point = byDate.get(advance.appliedOn);
+    if (point) point.totalPaise += paise;
+
+    const branch = branchSlices.get(advance.branchId) ?? {
+      branchId: advance.branchId,
+      // A branch with an advance but no report in range has no name to borrow.
+      branchName: advance.branchId,
+      totalPaise: 0,
+      reports: 0,
+    };
+    branch.totalPaise += paise;
+    branchSlices.set(advance.branchId, branch);
+  }
+
   const days = [...byDate.values()];
   const filedDays = days.filter((day) => day.reports > 0);
 
@@ -249,7 +284,8 @@ export function buildRangeSales(
     ),
     sectionTotals,
     expensePaise,
-    monthlyTrend: monthlyTrendFor(summaries, end),
+    advancePaise,
+    monthlyTrend: monthlyTrendFor(summaries, advances, end),
     voidedCount,
     reports: [...inRange].sort((a, b) =>
       a.report.reportDate < b.report.reportDate ? -1 : 1,

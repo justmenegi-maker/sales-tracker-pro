@@ -266,7 +266,6 @@ export function reportExpensePaise(report: DailyReport): number {
 export function reportFinanceCount(report: DailyReport): number {
   return report.lines.filter((line) => line.category === "finance").length;
 }
-
 export function advanceRefundedPaise(advance: Advance): number {
   return advance.refunds.reduce((sum, refund) => sum + refund.amountPaise, 0);
 }
@@ -787,29 +786,52 @@ export function summarizeReports(reports: DailyReport[]): ReportSummary[] {
       totalPaise: computeTotalSale(sections),
       sections,
       expensePaise: reportExpensePaise(report),
-      financeCount: report.lines.filter((line) => line.category === "finance").length,
+      financeCount: reportFinanceCount(report),
       hasDebt: report.lines.some((line) => line.category === "debt"),
     };
   });
 }
 
-/** Date → Total Sale, so a trend never re-scans the report list per day. */
+/**
+ * Date → Total Sale, so a trend never re-scans the report list per day.
+ *
+ * Advances an admin has added to a sale are part of that day's Total Sale, but
+ * they belong to the branch's day rather than to one report — so they are added
+ * once per branch and date. Two reports filed on the same day therefore cannot
+ * count the same advance twice. Only advances for branches present in
+ * `summaries` are added, which keeps a branch-filtered list from picking up
+ * another branch's advance.
+ */
 export function totalsByDate(
   summaries: ReportSummary[],
+  advances: Advance[] = [],
 ): Map<string, number> {
   const totals = new Map<string, number>();
+  const branches = new Set<string>();
+
   for (const summary of summaries) {
     const date = summary.report.reportDate;
+    branches.add(summary.report.branchId);
     totals.set(date, (totals.get(date) ?? 0) + summary.totalPaise);
   }
+
+  for (const advance of advances) {
+    if (!advance.appliedOn || !branches.has(advance.branchId)) continue;
+    const paise = advanceAppliedPaise(advance);
+    if (paise <= 0) continue;
+    totals.set(advance.appliedOn, (totals.get(advance.appliedOn) ?? 0) + paise);
+  }
+
   return totals;
 }
 
 /** Branch → date → Total Sale, for per-branch trend lines. */
 export function totalsByBranchDate(
   summaries: ReportSummary[],
+  advances: Advance[] = [],
 ): Map<string, Map<string, number>> {
   const totals = new Map<string, Map<string, number>>();
+
   for (const summary of summaries) {
     const branchId = summary.report.branchId;
     const byDate = totals.get(branchId) ?? new Map<string, number>();
@@ -817,6 +839,20 @@ export function totalsByBranchDate(
     byDate.set(date, (byDate.get(date) ?? 0) + summary.totalPaise);
     totals.set(branchId, byDate);
   }
+
+  // Same rule as `totalsByDate`: an advance lands once on its branch's day.
+  for (const advance of advances) {
+    if (!advance.appliedOn) continue;
+    const paise = advanceAppliedPaise(advance);
+    if (paise <= 0) continue;
+    const byDate = totals.get(advance.branchId) ?? new Map<string, number>();
+    byDate.set(
+      advance.appliedOn,
+      (byDate.get(advance.appliedOn) ?? 0) + paise,
+    );
+    totals.set(advance.branchId, byDate);
+  }
+
   return totals;
 }
 

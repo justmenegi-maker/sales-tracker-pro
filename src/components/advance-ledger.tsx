@@ -209,8 +209,10 @@ export function AdvanceLedger({
       toast.error(result.error ?? "Could not add the advance to a sale.");
       return;
     }
+    // The advance is now part of that day's Total Sale, so say what was added
+    // and where it landed rather than leaving it to the ledger to explain.
     toast.success(
-      `${advance.customerName}'s advance counted in the sale on ${formatDateLabel(actionDate)}.`,
+      `${formatINR(advanceHeldPaise(advance))} advance from ${advance.customerName} added to ${formatDateLabel(actionDate)}'s sale.`,
     );
     setAction(null);
   }
@@ -258,9 +260,9 @@ export function AdvanceLedger({
         <CardHeader className="pb-3">
           <CardTitle className="text-lg">Advance ledger</CardTitle>
           <p className="text-xs text-muted-foreground">
-            Advance money is not part of Total Sale on its own. When the customer
-            pays the balance, add the advance to that day&apos;s sale here so the
-            two days reconcile.
+            Advance money is counted once, on the day you add it to a sale. Add
+            it here and that day&apos;s Total Sale includes it, alongside any
+            balance the customer paid.
           </p>
         </CardHeader>
         <CardContent className="space-y-2 p-4 pt-0 sm:p-6 sm:pt-0">

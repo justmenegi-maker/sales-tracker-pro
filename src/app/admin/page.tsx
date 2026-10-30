@@ -35,6 +35,7 @@ import {
 } from "@/lib/format";
 import {
   REVIEW_META,
+  advanceAppliedPaise,
   debtOutstandingPaise,
   deriveDebtStatus,
   reviewCounts,
@@ -55,6 +56,7 @@ function AdminBody() {
     branches,
     reports,
     debts,
+    advances,
     invites,
     addBranch,
     deleteBranch,
@@ -131,9 +133,46 @@ function AdminBody() {
       : branches.find((branch) => branch.id === branchFilter)?.name ??
         "Selected branch";
 
+  const branchAdvances = useMemo(
+    () =>
+      branchFilter === "all"
+        ? advances
+        : advances.filter((advance) => advance.branchId === branchFilter),
+    [advances, branchFilter],
+  );
+
+  // Advance money added to a sale inside the selected range. It counts on the
+  // day it was added, so the range, the trend and the branch cards agree with
+  // the branch's own daily tiles.
+  const rangeAdvances = useMemo(
+    () =>
+      branchAdvances.filter(
+        (advance) =>
+          advance.appliedOn &&
+          advance.appliedOn >= rangeStart &&
+          advance.appliedOn <= today,
+      ),
+    [branchAdvances, rangeStart, today],
+  );
+
+  const rangeAdvancePaise = useMemo(
+    () =>
+      rangeAdvances.reduce(
+        (sum, advance) => sum + advanceAppliedPaise(advance),
+        0,
+      ),
+    [rangeAdvances],
+  );
+
+  const rangeDailyTotals = useMemo(
+    () => totalsByDate(inRange, rangeAdvances),
+    [inRange, rangeAdvances],
+  );
+
   const rangeTotal = useMemo(
-    () => inRange.reduce((sum, summary) => sum + summary.totalPaise, 0),
-    [inRange],
+    () =>
+      [...rangeDailyTotals.values()].reduce((sum, paise) => sum + paise, 0),
+    [rangeDailyTotals],
   );
 
   // Money paid out, tracked beside Total Sale and never inside it.
@@ -148,12 +187,12 @@ function AdminBody() {
   );
 
   const trend = useMemo(
-    () => trendSeries(totalsByDate(inRange), days, today),
-    [days, inRange, today],
+    () => trendSeries(rangeDailyTotals, days, today),
+    [days, rangeDailyTotals, today],
   );
 
   const perBranch = useMemo(() => {
-    const totalsByBranch = totalsByBranchDate(rangeActive);
+    const totalsByBranch = totalsByBranchDate(rangeActive, rangeAdvances);
     const datesByBranch = new Map<string, Set<string>>();
     for (const summary of rangeActive) {
       const dates = datesByBranch.get(summary.report.branchId) ?? new Set();
@@ -190,7 +229,7 @@ function AdminBody() {
         lastFiledDate: lastFiled,
       };
     });
-  }, [branches, debts, rangeActive, summaries]);
+  }, [branches, debts, rangeActive, rangeAdvances, summaries]);
 
   const visibleBranches = perBranch.filter(
     (row) => branchFilter === "all" || row.branch.id === branchFilter,
@@ -315,6 +354,7 @@ function AdminBody() {
             <SalesExportCard
               summaries={branchSummaries}
               scopeLabel={scopeLabel}
+              advances={branchAdvances}
             />
 
             <div className="flex flex-wrap items-center gap-2">
@@ -357,7 +397,11 @@ function AdminBody() {
               <StatTile
                 label="Total Sale in range"
                 value={formatINRWhole(rangeTotal)}
-                hint={`${inRange.length} reports filed`}
+                hint={
+                  rangeAdvancePaise > 0
+                    ? `${inRange.length} reports · incl. ${formatINRWhole(rangeAdvancePaise)} advance`
+                    : `${inRange.length} reports filed`
+                }
                 tone="primary"
               />
               <StatTile

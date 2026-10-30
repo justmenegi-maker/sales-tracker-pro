@@ -210,6 +210,68 @@ describe("summarizeReports", () => {
   });
 });
 
+describe("day totals with advance money", () => {
+  it("counts an advance added to a sale once, not once per report", () => {
+    const summaries = summarizeReports([
+      report({ id: "a", reportDate: "2026-10-13", cashPaise: 100000, onlinePaise: 0, lines: [] }),
+      report({ id: "b", reportDate: "2026-10-13", cashPaise: 50000, onlinePaise: 0, lines: [] }),
+    ]);
+    const advances = [advance({ amountPaise: 500000, appliedOn: "2026-10-13" })];
+
+    expect(totalsByDate(summaries, advances).get("2026-10-13")).toBe(650000);
+    expect(
+      totalsByBranchDate(summaries, advances)
+        .get("branch_kaza")
+        ?.get("2026-10-13"),
+    ).toBe(650000);
+  });
+
+  it("leaves a held advance out and counts only the unrefunded part", () => {
+    const summaries = summarizeReports([
+      report({ reportDate: "2026-10-13", cashPaise: 100000, onlinePaise: 0, lines: [] }),
+    ]);
+    const advances = [
+      advance({ id: "held" }),
+      advance({
+        id: "part",
+        amountPaise: 200000,
+        appliedOn: "2026-10-13",
+        refunds: [
+          {
+            id: "refund_1",
+            amountPaise: 50000,
+            refundedOn: "2026-10-12",
+            note: null,
+          },
+        ],
+      }),
+    ];
+
+    expect(totalsByDate(summaries, advances).get("2026-10-13")).toBe(250000);
+  });
+
+  it("ignores another branch's advance in a branch-scoped list", () => {
+    const summaries = summarizeReports([
+      report({ reportDate: "2026-10-13", cashPaise: 100000, onlinePaise: 0, lines: [] }),
+    ]);
+    const advances = [
+      advance({
+        id: "other",
+        branchId: "branch_spillow",
+        amountPaise: 999000,
+        appliedOn: "2026-10-13",
+      }),
+    ];
+
+    expect(totalsByDate(summaries, advances).get("2026-10-13")).toBe(100000);
+    expect(
+      totalsByBranchDate(summaries, advances)
+        .get("branch_kaza")
+        ?.get("2026-10-13"),
+    ).toBe(100000);
+  });
+});
+
 describe("reviewCounts", () => {
   it("tallies pending, ok and flagged reports", () => {
     const counts = reviewCounts([

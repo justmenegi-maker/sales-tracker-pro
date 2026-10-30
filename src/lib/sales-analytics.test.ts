@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { summarizeReports } from "./report";
-import type { DailyReport } from "./report";
+import type { Advance, DailyReport } from "./report";
 import {
   buildRangeSales,
-  endOfMonth,
   reportContext,
   shiftMonth,
   startOfMonth,
@@ -38,6 +37,50 @@ function summary(overrides: Partial<DailyReport> = {}) {
   return summarizeReports([report(overrides)])[0];
 }
 
+function advance(overrides: Partial<Advance> = {}): Advance {
+  return {
+    id: "advance_1",
+    branchId: "branch_kaza",
+    customerName: "Imran",
+    itemName: "Ceiling fan",
+    amountPaise: 500000,
+    advanceDate: "2026-10-01",
+    appliedOn: null,
+    appliedByName: null,
+    refunds: [],
+    note: null,
+    createdAt: "2026-10-01T09:00:00.000Z",
+    ...overrides,
+  };
+}
+
+describe("buildRangeSales with advance money", () => {
+  it("counts an advance applied inside the range on that day and in the total", () => {
+    const summaries = [summary({ reportDate: "2026-10-03" })];
+    const range = buildRangeSales(summaries, "2026-10-01", "2026-10-07", [
+      advance({ amountPaise: 500000, appliedOn: "2026-10-03" }),
+    ]);
+
+    expect(range.advancePaise).toBe(500000);
+    expect(range.totalPaise).toBe(510000);
+    expect(
+      range.days.find((day) => day.date === "2026-10-03")?.totalPaise,
+    ).toBe(510000);
+    expect(range.branchSlices[0].totalPaise).toBe(510000);
+  });
+
+  it("leaves an advance applied outside the range out", () => {
+    const summaries = [summary({ reportDate: "2026-10-03" })];
+    const range = buildRangeSales(summaries, "2026-10-01", "2026-10-07", [
+      advance({ amountPaise: 500000, appliedOn: "2026-10-20" }),
+    ]);
+
+    expect(range.advancePaise).toBe(0);
+    expect(range.totalPaise).toBe(10000);
+    expect(range.days.every((day) => day.totalPaise === (day.date === "2026-10-03" ? 10000 : 0))).toBe(true);
+  });
+});
+
 describe("month helpers", () => {
   it("walks across year boundaries", () => {
     expect(shiftMonth("2026-01", -1)).toBe("2025-12");
@@ -45,11 +88,9 @@ describe("month helpers", () => {
     expect(shiftMonth("2026-10", -5)).toBe("2026-05");
   });
 
-  it("knows the edges of a month including February", () => {
+  it("knows the first day of the month", () => {
     expect(startOfMonth("2026-10-17")).toBe("2026-10-01");
-    expect(endOfMonth("2026-10-17")).toBe("2026-10-31");
-    expect(endOfMonth("2024-02-10")).toBe("2024-02-29");
-    expect(endOfMonth("2026-02-10")).toBe("2026-02-28");
+    expect(startOfMonth("2026-02-10")).toBe("2026-02-01");
   });
 });
 
