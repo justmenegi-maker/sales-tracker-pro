@@ -175,77 +175,90 @@ export function ReportForm() {
     <>
     <div className="grid gap-6 lg:grid-cols-[1.6fr_1fr] lg:items-start">
       <div className="space-y-4">
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-lg">Report details</CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-4 p-4 pt-0 sm:grid-cols-2 sm:p-6 sm:pt-0">
-            <div className="space-y-1">
-              <Label htmlFor="report-date">Report date</Label>
-              <Input
-                id="report-date"
-                type="date"
-                value={reportDate}
-                onChange={(event) => setReportDate(event.target.value)}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="report-branch">Branch</Label>
-              {isBranchUser ? (
+        {/* The branch decides the day before any money is entered, so the
+            open/closed choice sits at the top where it is impossible to miss. */}
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg">Report details</CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-4 p-4 pt-0 sm:grid-cols-2 sm:p-6 sm:pt-0">
+              <div className="space-y-1">
+                <Label htmlFor="report-date">Report date</Label>
                 <Input
-                  id="report-branch"
-                  readOnly
-                  value={
-                    branches.find((branch) => branch.id === branchId)?.name ??
-                    "Your branch"
-                  }
-                  className="bg-muted/60"
+                  id="report-date"
+                  type="date"
+                  value={reportDate}
+                  onChange={(event) => setReportDate(event.target.value)}
                 />
-              ) : (
-                <select
-                  id="report-branch"
-                  value={branchId}
-                  onChange={(event) => setSelectedBranchId(event.target.value)}
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                >
-                  {branches.map((branch) => (
-                    <option key={branch.id} value={branch.id}>
-                      {branch.name}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </div>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="report-branch">Branch</Label>
+                {isBranchUser ? (
+                  <Input
+                    id="report-branch"
+                    readOnly
+                    value={
+                      branches.find((branch) => branch.id === branchId)?.name ??
+                      "Your branch"
+                    }
+                    className="bg-muted/60"
+                  />
+                ) : (
+                  <select
+                    id="report-branch"
+                    value={branchId}
+                    onChange={(event) => setSelectedBranchId(event.target.value)}
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  >
+                    {branches.map((branch) => (
+                      <option key={branch.id} value={branch.id}>
+                        {branch.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            </CardContent>
+          </Card>
 
-            <div className="space-y-1 sm:col-span-2">
-              <Label>Shop status</Label>
+          <Card className="border-primary/40 bg-primary/5">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Shop status</CardTitle>
+            </CardHeader>
+            <CardContent className="p-4 pt-0">
               <div className="flex gap-2">
                 <Button
                   type="button"
                   variant={shopClosed ? "outline" : "default"}
-                  className="flex-1 gap-2"
+                  className="relative flex-1 gap-2"
                   aria-pressed={!shopClosed}
+                  aria-label="Mark the shop as open for this day"
                   onClick={() => setShopClosed(false)}
                 >
-                  <DoorOpen className="size-4" /> Shop open
+                  <DoorOpen className="size-4" />
+                  Shop open
                 </Button>
                 <Button
                   type="button"
                   variant={shopClosed ? "default" : "outline"}
-                  className="flex-1 gap-2"
+                  className="relative flex-1 gap-2"
                   aria-pressed={shopClosed}
+                  aria-label="Mark the shop as closed for this day"
                   onClick={() => setShopClosed(true)}
                 >
-                  <DoorClosed className="size-4" /> Shop closed
+                  <DoorClosed className="size-4" />
+                  Shop closed
                 </Button>
               </div>
-              <p className="text-xs text-muted-foreground">
-                Days the shop did not open are sent to the admin as a notice, so
-                they read as accounted for instead of as a missing filing.
+              <p className="mt-2 text-xs text-muted-foreground">
+                {shopClosed
+                  ? "No sale is recorded for this day."
+                  : "Days the shop did not open are sent to the admin as a notice, so they read as accounted for instead of as a missing filing."}
               </p>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </div>
 
         {shopClosed ? (
           <Card className="border-amber-500/40 bg-amber-500/5">
