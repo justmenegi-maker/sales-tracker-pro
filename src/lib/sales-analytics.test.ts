@@ -69,6 +69,26 @@ describe("buildRangeSales with advance money", () => {
     expect(range.branchSlices[0].totalPaise).toBe(510000);
   });
 
+  it("keeps an advance off a day that branch filed as closed", () => {
+    const summaries = [
+      summary({
+        reportDate: "2026-10-03",
+        shopClosed: true,
+        cashPaise: 0,
+        onlinePaise: 0,
+      }),
+    ];
+    const range = buildRangeSales(summaries, "2026-10-01", "2026-10-07", [
+      advance({ amountPaise: 500000, appliedOn: "2026-10-03" }),
+    ]);
+
+    expect(range.advancePaise).toBe(0);
+    expect(range.totalPaise).toBe(0);
+    expect(
+      range.days.find((day) => day.date === "2026-10-03")?.totalPaise,
+    ).toBe(0);
+  });
+
   it("leaves an advance applied outside the range out", () => {
     const summaries = [summary({ reportDate: "2026-10-03" })];
     const range = buildRangeSales(summaries, "2026-10-01", "2026-10-07", [

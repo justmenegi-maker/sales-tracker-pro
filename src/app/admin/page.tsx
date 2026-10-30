@@ -62,6 +62,7 @@ function AdminBody() {
     addBranch,
     deleteBranch,
     inviteStaff,
+    createStaffAccount,
     deleteInvite,
     setReportReview,
   } = useAppStore();
@@ -82,6 +83,7 @@ function AdminBody() {
   const [inviteName, setInviteName] = useState("");
   const [inviteBranchId, setInviteBranchId] = useState(branches[0]?.id || "");
   const [inviteRole, setInviteRole] = useState<"branch" | "admin">("branch");
+  const [invitePassword, setInvitePassword] = useState("");
   const [invitingStaff, setInvitingStaff] = useState(false);
 
   const today = todayISO();
@@ -308,17 +310,30 @@ function AdminBody() {
     }
 
     setInvitingStaff(true);
-    const result = await inviteStaff({
+    const shared = {
       email: inviteEmail.trim(),
       displayName: inviteName.trim() || inviteEmail.split("@")[0],
       branchId: targetBranch,
       role: inviteRole,
-    });
+    };
+
+    // A password means "this person has no account yet": the admin creates it
+    // here rather than letting a sign-in screen mint one for an address nobody
+    // has proved they own.
+    const result = invitePassword.trim()
+      ? await createStaffAccount({ ...shared, password: invitePassword.trim() })
+      : await inviteStaff(shared);
+
     setInvitingStaff(false);
     if (result.ok) {
-      toast.success(`Invitation sent to ${inviteEmail}.`);
+      toast.success(
+        invitePassword.trim()
+          ? `Account created for ${inviteEmail}. Share the temporary password with them directly.`
+          : `Invitation sent to ${inviteEmail}.`,
+      );
       setInviteEmail("");
       setInviteName("");
+      setInvitePassword("");
       return;
     }
     toast.error(result.error ?? "Failed to send staff invitation.");
@@ -704,7 +719,7 @@ function AdminBody() {
                 <CardHeader>
                   <CardTitle className="text-lg flex items-center gap-2">
                     <UserPlus className="size-5 text-primary" />
-                    Invite Staff / Manager via Gmail
+                    Set up staff / manager access
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
@@ -763,9 +778,32 @@ function AdminBody() {
                       </div>
                     </div>
 
+                    <div className="space-y-1">
+                      <Label htmlFor="staff-password">
+                        Temporary password (for a new account)
+                      </Label>
+                      <Input
+                        id="staff-password"
+                        type="text"
+                        autoComplete="new-password"
+                        placeholder="At least 6 characters"
+                        value={invitePassword}
+                        onChange={(e) => setInvitePassword(e.target.value)}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Fill this in to create the sign-in account now and hand
+                        the password over in person. Leave it blank to invite an
+                        account that already exists, such as a Google sign-in.
+                      </p>
+                    </div>
+
                     <Button type="submit" disabled={invitingStaff} className="w-full gap-2">
                       <Mail className="size-4" />
-                      {invitingStaff ? "Sending invite…" : "Invite via Gmail"}
+                      {invitingStaff
+                        ? "Saving…"
+                        : invitePassword.trim()
+                          ? "Create account & invite"
+                          : "Invite existing account"}
                     </Button>
                   </form>
                 </CardContent>

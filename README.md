@@ -89,6 +89,18 @@ The rules let a branch update only `appliedOn`, `appliedByName` and `refunds`
 after the entry exists, so the customer, item and amount cannot be rewritten from
 a branch login.
 
+## Recording a payment
+
+A payment is an entry in the debt's `payments` list: amount, date (always today
+in `Asia/Kolkata`), an optional note, and `recordedBy` / `recordedByName` for who
+recorded it. The amount can never exceed what is still owed — `debtPaymentError`
+in `src/lib/report.ts` refuses it, the ledger form checks it first so the reason
+shows before a round trip, and the store re-checks inside a transaction against
+the server's copy of the debt. That transaction also means two people recording
+a payment at the same moment append both instead of overwriting one. Refunds on
+an advance are written the same way. The rules let the `payments` list grow by one
+entry and never shrink, so money recorded as collected cannot be edited out.
+
 ## Debt due dates
 
 Every debt row in the debt ledger carries an editable **Due date** column. A new
@@ -192,7 +204,12 @@ the others without a reload.
 A session is resolved in `src/lib/store.tsx` on every auth change:
 
 - **Admin** — the auth uid has an `admins/{uid}` document, or the account is the
-  bootstrap admin email. Admins read and write every branch.
+  bootstrap admin email. Admins read and write every branch. The bootstrap email
+  is hard-coded in `src/lib/store.tsx` and `firestore.rules`; it exists so the
+  first admin can sign in and create the `admins/{uid}` document. Once that
+  document exists, the email can be deleted from both places in one commit —
+  after that, admin rights are granted and revoked per uid instead of depending
+  on one mailbox staying secure.
 - **Branch staff** — a `users/{uid}` profile with `role: "branch"` and a
   `branchId`. The invite document for the signed-in email (or a branch whose
   `managerEmail` matches) supplies that `branchId` on first sign-in.
@@ -223,6 +240,17 @@ Sending `managerEmail: null` was refused outright, which is what made every
 "Add Branch" press fail with nothing to show for it. The document id is the
 slugified name, and a manager email is stored lower-cased because that is the
 value both the rules and the manager lookup compare against.
+
+### Accounts
+
+Nothing in the app signs anyone up. *Set up staff / manager access* creates the
+sign-in account (email plus a temporary password you hand over in person) and
+writes the invitation in one step; leaving the password blank invites an account
+that already exists, such as a Google sign-in. The sign-in screen never creates an
+account — it used to, so anyone could register an address they did not own, and a
+later invitation to that address then handed over the branch. If the address
+already has an account the portal says so rather than inviting it, because that
+is exactly what a squatted address looks like.
 
 An invitation addressed to an email is what links that account to a branch on
 first sign-in, and an invitation with role `admin` grants admin rights (an invite

@@ -94,6 +94,9 @@ export type DebtPayment = {
   amountPaise: number;
   paidOn: string;
   note: string | null;
+  /** Who recorded the payment. Absent on payments recorded before it existed. */
+  recordedBy?: string | null;
+  recordedByName?: string | null;
 };
 
 export type DebtStatus = "open" | "partial" | "cleared";
@@ -425,6 +428,25 @@ export function debtOutstandingPaise(debt: Debt): number {
   return Math.max(0, debt.amountPaise - debtPaidPaise(debt));
 }
 
+/**
+ * Why a payment cannot be recorded against this debt, or null when it can.
+ *
+ * A debt is never overpaid: collecting more than is owed would leave the
+ * ledger showing "cleared" with more money in it than the debt ever was, and
+ * the excess has nowhere to go — it is not a sale and not a debt.
+ */
+export function debtPaymentError(debt: Debt, amountPaise: number): string | null {
+  if (!Number.isInteger(amountPaise) || amountPaise <= 0) {
+    return "Enter the amount received.";
+  }
+  const outstanding = debtOutstandingPaise(debt);
+  if (outstanding <= 0) return "This debt is already paid in full.";
+  if (amountPaise > outstanding) {
+    return "The payment cannot be more than the amount still owed.";
+  }
+  return null;
+}
+
 /** Money still owed after its promised due date has passed. */
 export function debtIsOverdue(debt: Debt, today: string): boolean {
   return Boolean(
@@ -634,10 +656,10 @@ function debtNameKey(name: string): string {
  * the ledger holding the old debt, so the ledger and the day's Total Sale told
  * two different stories.
  *
- * Matching is deliberately generous: a row is paired with a ledger entry by
- * product + amount first, then amount, then product, then order, so a corrected
- * amount keeps the payments already recorded against that debt. Anything left
- * over is voided, and debt rows with no ledger entry are created.
+ * Matching is generous but never arbitrary: a row is paired with a ledger entry
+ * by product + amount first, then by amount alone, then by product alone, so a
+ * corrected amount keeps the payments already recorded against that debt. A row
+ * that matches nothing is created, and an entry that matches nothing is voided.
  */
 export function planReportDebtSync(input: {
   branchId: string;
@@ -676,15 +698,17 @@ export function planReportDebtSync(input: {
   const openLines = [...input.debtLines];
   const pairs: Array<{ debt: Debt; line: { label: string; amountPaise: number } }> = [];
 
+  // Matching stops here on purpose. A catch-all pass would pair whatever is
+  // left over, so a day with two corrected rows could attach one entry's
+  // payments to the other's product. Unpaired rows are created fresh instead:
+  // the unpaired entry is voided, never deleted, so nothing is lost from the
+  // audit trail.
   const passes: Array<(debt: Debt, line: { label: string; amountPaise: number }) => boolean> = [
     (debt, line) =>
       debt.amountPaise === line.amountPaise &&
       debtNameKey(debt.productName) === debtNameKey(line.label),
     (debt, line) => debt.amountPaise === line.amountPaise,
     (debt, line) => debtNameKey(debt.productName) === debtNameKey(line.label),
-    // Last resort: both the product and the amount changed, but the entry still
-    // belongs to this report, so keeping its payments is better than losing them.
-    () => true,
   ];
 
   for (const matches of passes) {
@@ -839,12 +863,28 @@ export function summarizeReports(reports: DailyReport[]): ReportSummary[] {
  * `summaries` are added, which keeps a branch-filtered list from picking up
  * another branch's advance.
  */
+/**
+ * `branchId|date` for every day a branch filed as closed.
+ *
+ * A closed day carries no sale, so an advance cannot be folded into it either:
+ * otherwise a day that reads "shop closed" would still show money.
+ */
+export function closedBranchDates(summaries: ReportSummary[]): Set<string> {
+  const closed = new Set<string>();
+  for (const summary of summaries) {
+    if (!isShopClosed(summary.report)) continue;
+    closed.add(`${summary.report.branchId}|${summary.report.reportDate}`);
+  }
+  return closed;
+}
+
 export function totalsByDate(
   summaries: ReportSummary[],
   advances: Advance[] = [],
 ): Map<string, number> {
   const totals = new Map<string, number>();
   const branches = new Set<string>();
+  const closed = closedBranchDates(summaries);
 
   for (const summary of summaries) {
     const date = summary.report.reportDate;
@@ -854,6 +894,7 @@ export function totalsByDate(
 
   for (const advance of advances) {
     if (!advance.appliedOn || !branches.has(advance.branchId)) continue;
+    if (closed.has(`${advance.branchId}|${advance.appliedOn}`)) continue;
     const paise = advanceAppliedPaise(advance);
     if (paise <= 0) continue;
     totals.set(advance.appliedOn, (totals.get(advance.appliedOn) ?? 0) + paise);
@@ -868,6 +909,7 @@ export function totalsByBranchDate(
   advances: Advance[] = [],
 ): Map<string, Map<string, number>> {
   const totals = new Map<string, Map<string, number>>();
+  const closed = closedBranchDates(summaries);
 
   for (const summary of summaries) {
     const branchId = summary.report.branchId;
@@ -877,9 +919,11 @@ export function totalsByBranchDate(
     totals.set(branchId, byDate);
   }
 
-  // Same rule as `totalsByDate`: an advance lands once on its branch's day.
+  // Same rule as `totalsByDate`: an advance lands once on its branch's day,
+  // and never on a day that branch filed as closed.
   for (const advance of advances) {
     if (!advance.appliedOn) continue;
+    if (closed.has(`${advance.branchId}|${advance.appliedOn}`)) continue;
     const paise = advanceAppliedPaise(advance);
     if (paise <= 0) continue;
     const byDate = totals.get(advance.branchId) ?? new Map<string, number>();

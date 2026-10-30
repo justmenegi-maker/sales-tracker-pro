@@ -20,6 +20,7 @@ import {
   debtIsOverdue,
   debtOutstandingPaise,
   debtPaidPaise,
+  debtPaymentError,
   deriveDebtStatus,
 } from "@/lib/report";
 import type { Debt } from "@/lib/report";
@@ -42,6 +43,7 @@ export function DebtLedger({ branchId }: { branchId?: string | null }) {
   } = useAppStore();
   const [openPaymentFor, setOpenPaymentFor] = useState<string | null>(null);
   const [paymentPaise, setPaymentPaise] = useState(0);
+  const [paymentNote, setPaymentNote] = useState("");
   const [productName, setProductName] = useState("");
   const [amountPaise, setAmountPaise] = useState(0);
   const [dueDate, setDueDate] = useState("");
@@ -71,21 +73,21 @@ export function DebtLedger({ branchId }: { branchId?: string | null }) {
     branches.find((branch) => branch.id === id)?.name ?? "Branch";
 
   async function submitPayment(debt: Debt) {
-    if (paymentPaise <= 0) {
-      toast.error("Enter the amount received.");
+    // Checked here too so the person sees why before a round trip; the store
+    // re-checks against the server's copy, which is what actually enforces it.
+    const blocked = debtPaymentError(debt, paymentPaise);
+    if (blocked) {
+      toast.error(blocked);
       return;
     }
     setSaving(true);
-    const result = await recordDebtPayment(
-      debt.id,
-      paymentPaise,
-      "Payment received",
-    );
+    const result = await recordDebtPayment(debt.id, paymentPaise, paymentNote);
     setSaving(false);
     if (result.ok) {
       toast.success(`Payment of ${formatINR(paymentPaise)} recorded.`);
       setOpenPaymentFor(null);
       setPaymentPaise(0);
+      setPaymentNote("");
     } else {
       toast.error(result.error ?? "Could not record the payment.");
     }
@@ -238,6 +240,7 @@ export function DebtLedger({ branchId }: { branchId?: string | null }) {
                             openPaymentFor === debt.id ? null : debt.id,
                           );
                           setPaymentPaise(0);
+                          setPaymentNote("");
                         }}
                       >
                         Payment
@@ -249,7 +252,7 @@ export function DebtLedger({ branchId }: { branchId?: string | null }) {
                     <div className="mt-3 flex flex-wrap items-end gap-2 border-t pt-3">
                       <div className="flex-1 space-y-1">
                         <Label htmlFor={`pay-${debt.id}`}>
-                          Amount received
+                          Amount received (owed {formatINR(outstandingForDebt)})
                         </Label>
                         <MoneyInput
                           id={`pay-${debt.id}`}
@@ -258,6 +261,18 @@ export function DebtLedger({ branchId }: { branchId?: string | null }) {
                           placeholder={String(
                             (outstandingForDebt / 100).toFixed(2),
                           )}
+                        />
+                      </div>
+                      <div className="flex-1 space-y-1">
+                        <Label htmlFor={`pay-note-${debt.id}`}>
+                          Note (optional)
+                        </Label>
+                        <Input
+                          id={`pay-note-${debt.id}`}
+                          value={paymentNote}
+                          onChange={(event) => setPaymentNote(event.target.value)}
+                          maxLength={200}
+                          placeholder="Cash handed over"
                         />
                       </div>
                       <Button

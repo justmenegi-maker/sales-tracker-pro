@@ -11,6 +11,7 @@ import {
   buildReportEditPayload,
   debtOutstandingPaise,
   debtPaidPaise,
+  debtPaymentError,
   deriveAdvanceStatus,
   debtIsOverdue,
   deriveDebtStatus,
@@ -318,6 +319,28 @@ describe("day totals with advance money", () => {
         ?.get("2026-10-13"),
     ).toBe(100000);
   });
+
+  it("keeps an advance off a day the branch filed as closed", () => {
+    // A closed day is a notice, not a sale, so nothing may land on it — not
+    // even money received earlier that was pointed at that date.
+    const summaries = summarizeReports([
+      report({
+        reportDate: "2026-10-13",
+        shopClosed: true,
+        cashPaise: 0,
+        onlinePaise: 0,
+        lines: [],
+      }),
+    ]);
+    const advances = [advance({ amountPaise: 500000, appliedOn: "2026-10-13" })];
+
+    expect(totalsByDate(summaries, advances).get("2026-10-13")).toBe(0);
+    expect(
+      totalsByBranchDate(summaries, advances)
+        .get("branch_kaza")
+        ?.get("2026-10-13"),
+    ).toBe(0);
+  });
 });
 
 describe("reviewCounts", () => {
@@ -397,6 +420,42 @@ describe("debt derivation", () => {
     });
     expect(debtOutstandingPaise(overpaid)).toBe(0);
     expect(deriveDebtStatus(overpaid)).toBe("cleared");
+  });
+});
+
+describe("debtPaymentError", () => {
+  const part = debt({
+    payments: [
+      { id: "p1", amountPaise: 400000, paidOn: "2026-10-15", note: null },
+    ],
+  });
+
+  it("accepts a payment up to the amount still owed", () => {
+    expect(debtPaymentError(part, 240000)).toBeNull();
+    expect(debtPaymentError(debt(), 640000)).toBeNull();
+  });
+
+  it("refuses a payment over the amount still owed", () => {
+    const refusal = "The payment cannot be more than the amount still owed.";
+    expect(debtPaymentError(part, 240001)).toBe(refusal);
+    expect(debtPaymentError(debt(), 640001)).toBe(refusal);
+  });
+
+  it("refuses an empty, negative or fractional amount", () => {
+    expect(debtPaymentError(debt(), 0)).toBe("Enter the amount received.");
+    expect(debtPaymentError(debt(), -100)).toBe("Enter the amount received.");
+    expect(debtPaymentError(debt(), 1000.5)).toBe("Enter the amount received.");
+  });
+
+  it("refuses any payment on a debt already paid in full", () => {
+    const cleared = debt({
+      payments: [
+        { id: "p1", amountPaise: 640000, paidOn: "2026-10-15", note: null },
+      ],
+    });
+    expect(debtPaymentError(cleared, 100)).toBe(
+      "This debt is already paid in full.",
+    );
   });
 });
 
@@ -973,6 +1032,26 @@ describe("planReportDebtSync", () => {
       ledger: [debt()],
     });
 
+    expect(plan.voids.map((entry) => entry.id)).toEqual(["debt_1"]);
+  });
+
+  it("creates a fresh entry instead of pairing when product and amount both changed", () => {
+    // The old last-resort pass paired anything left over, which let one entry's
+    // payments attach themselves to a different product.
+    const plan = planReportDebtSync({
+      branchId: "branch_kaza",
+      previousDate: "2026-10-13",
+      previousDebtLines: [{ label: "Ceiling fan", amountPaise: 640000 }],
+      otherDebtReportsOnDate: 0,
+      nextDate: "2026-10-13",
+      debtLines: [{ label: "Cooler", amountPaise: 150000 }],
+      ledger: [debt()],
+    });
+
+    expect(plan.updates).toEqual([]);
+    expect(plan.creates).toEqual([
+      { productName: "Cooler", amountPaise: 150000, debtDate: "2026-10-13" },
+    ]);
     expect(plan.voids.map((entry) => entry.id)).toEqual(["debt_1"]);
   });
 

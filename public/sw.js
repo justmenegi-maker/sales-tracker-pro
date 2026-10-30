@@ -1,8 +1,16 @@
-// Service Worker for SK Tapri Daily Sales Report PWA
-const CACHE_NAME = "sktapri-v1";
+// Service worker for the SK Tapri PWA.
+//
+// It exists for the installable-app shell — icons and the manifest — and
+// deliberately caches nothing else. The app has no offline mode: every save
+// goes straight to Firestore, so a page served from cache looks usable while
+// each filing, payment and correction fails. Navigations therefore always go to
+// the network, and with no connection the browser shows its own offline page
+// rather than a screen that pretends to work.
+const CACHE_NAME = "sktapri-static-v2";
 
-const PRECACHE_ASSETS = [
-  "/",
+// Icons and manifest only. No HTML: a cached document is what made the app look
+// usable offline.
+const STATIC_ASSETS = [
   "/manifest.json",
   "/pwa-192x192.png",
   "/pwa-512x512.png",
@@ -11,46 +19,49 @@ const PRECACHE_ASSETS = [
   "/icon.svg",
 ];
 
-// Install event: Precache core static assets
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches
       .open(CACHE_NAME)
-      .then((cache) => cache.addAll(PRECACHE_ASSETS))
-      .then(() => self.skipWaiting())
+      .then((cache) =>
+        // One missing icon must not fail the whole install, so each asset is
+        // cached on its own.
+        Promise.all(
+          STATIC_ASSETS.map(async (url) => {
+            try {
+              const response = await fetch(url);
+              if (response.ok) await cache.put(url, response);
+            } catch {
+              // A flaky connection at install time just leaves it uncached.
+            }
+          }),
+        ),
+      )
+      .then(() => self.skipWaiting()),
   );
 });
 
-// Activate event: Clean up old caches & take control immediately
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((cacheNames) =>
+      .then((names) =>
         Promise.all(
-          cacheNames.map((name) => {
-            if (name !== CACHE_NAME) {
-              return caches.delete(name);
-            }
-          })
-        )
+          names.filter((name) => name !== CACHE_NAME).map((name) => caches.delete(name)),
+        ),
       )
-      .then(() => self.clients.claim())
+      .then(() => self.clients.claim()),
   );
 });
 
-// Fetch event: Network-first for dynamic & API; cache-first for static assets
 self.addEventListener("fetch", (event) => {
   const { request } = event;
 
-  // Only handle GET requests
-  if (request.method !== "GET") {
-    return;
-  }
+  if (request.method !== "GET") return;
 
   const url = new URL(request.url);
 
-  // Bypass Firestore, Google Auth, and external API requests (always network live)
+  // Firestore, Firebase Auth and any API call are always live.
   if (
     url.hostname.includes("googleapis.com") ||
     url.hostname.includes("firebaseio.com") ||
@@ -61,75 +72,34 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Static assets (images, fonts, manifests) -> Cache First with Network Fallback
+  // Pages are never served from cache: no offline mode.
+  if (request.mode === "navigate") return;
+
   if (
-    url.pathname.match(/\.(png|jpg|jpeg|svg|webp|ico|woff2?|ttf|css)$/) ||
+    url.pathname.match(/\.(png|jpg|jpeg|svg|webp|ico|woff2?|ttf)$/) ||
     url.pathname === "/manifest.json"
   ) {
     event.respondWith(
-      caches.match(request).then((cachedResponse) => {
-        if (cachedResponse) {
-          // Revalidate in background
+      caches.match(request).then((cached) => {
+        if (cached) {
           fetch(request)
-            .then((networkResponse) => {
-              if (networkResponse && networkResponse.status === 200) {
-                caches.open(CACHE_NAME).then((cache) => {
-                  cache.put(request, networkResponse);
-                });
+            .then((response) => {
+              if (response.ok) {
+                caches.open(CACHE_NAME).then((cache) => cache.put(request, response));
               }
             })
             .catch(() => {});
-          return cachedResponse;
+          return cached;
         }
 
-        return fetch(request).then((networkResponse) => {
-          if (networkResponse && networkResponse.status === 200) {
-            const responseClone = networkResponse.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(request, responseClone);
-            });
+        return fetch(request).then((response) => {
+          if (response.ok) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
           }
-          return networkResponse;
+          return response;
         });
-      })
+      }),
     );
-    return;
   }
-
-  // HTML Navigation pages -> Network First with Cache Fallback
-  if (request.mode === "navigate") {
-    event.respondWith(
-      fetch(request)
-        .then((networkResponse) => {
-          if (networkResponse && networkResponse.status === 200) {
-            const responseClone = networkResponse.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(request, responseClone);
-            });
-          }
-          return networkResponse;
-        })
-        .catch(async () => {
-          const cachedResponse = await caches.match(request);
-          if (cachedResponse) {
-            return cachedResponse;
-          }
-          // Return the cached root shell as offline fallback
-          const rootCached = await caches.match("/");
-          if (rootCached) {
-            return rootCached;
-          }
-          return new Response(
-            "<!DOCTYPE html><html><body style='font-family:sans-serif;text-align:center;padding:50px;'><h2>SK Tapri is currently offline</h2><p>Please check your internet connection.</p></body></html>",
-            { headers: { "Content-Type": "text/html" } }
-          );
-        })
-    );
-    return;
-  }
-
-  // Default network with cache fallback
-  event.respondWith(
-    fetch(request).catch(() => caches.match(request))
-  );
 });

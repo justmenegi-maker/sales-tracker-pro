@@ -34,6 +34,11 @@ rules_version = '2';
 //
 //  4. A delete request has no `request.resource`, so shape checks on delete
 //     denied every removal. Delete rules only check the caller and the id.
+//
+//  5. Debt payments and advance refunds are append-only for branch staff: the
+//     list may grow by one entry and never shrink, so money already recorded as
+//     collected cannot be edited out of the ledger. Admins keep the wider
+//     correction path they already had.
 service cloud.firestore {
   match /databases/{database}/documents {
     // ------------------------------------------------------------------
@@ -363,11 +368,14 @@ service cloud.firestore {
       allow create: if signedIn() && isValidId(debtId) && isValidDebt(incoming()) &&
                     canUseBranch(incoming().get('branchId', null));
       // A branch may record a payment or set the due date; the product, amount
-      // and date stay untouched once the debt is recorded.
+      // and date stay untouched once the debt is recorded. A payment can only
+      // be *appended*: the list may grow by exactly one entry and never shrink,
+      // so recorded money cannot be erased from the ledger to hide a collection.
       allow update: if signedIn() && isValidId(debtId) && isValidDebt(incoming()) && (
         isAdmin() ||
         (canUseBranch(existing().get('branchId', null)) &&
-         incoming().diff(existing()).affectedKeys().hasOnly(['payments', 'dueDate']))
+         incoming().diff(existing()).affectedKeys().hasOnly(['payments', 'dueDate']) &&
+         incoming().payments.size() <= existing().payments.size() + 1)
       );
       allow delete: if isAdmin() && isValidId(debtId);
     }
@@ -377,11 +385,14 @@ service cloud.firestore {
       allow create: if signedIn() && isValidId(advanceId) && isValidAdvance(incoming()) &&
                     canUseBranch(incoming().get('branchId', null));
       // A held advance can be folded into a sale or refunded; its customer,
-      // item, amount and received date stay untouched.
+      // item, amount and received date stay untouched. Refunds are append-only
+      // for the same reason payments are: a refund that was given cannot be
+      // edited away.
       allow update: if signedIn() && isValidId(advanceId) && isValidAdvance(incoming()) && (
         isAdmin() ||
         (canUseBranch(existing().get('branchId', null)) &&
-         incoming().diff(existing()).affectedKeys().hasOnly(['appliedOn', 'appliedByName', 'refunds']))
+         incoming().diff(existing()).affectedKeys().hasOnly(['appliedOn', 'appliedByName', 'refunds']) &&
+         incoming().refunds.size() <= existing().refunds.size() + 1)
       );
       allow delete: if isAdmin() && isValidId(advanceId);
     }

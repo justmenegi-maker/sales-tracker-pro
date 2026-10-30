@@ -6,7 +6,7 @@
  * always integer paise; nothing in this module formats money.
  */
 import { addDays } from "./format";
-import { advanceAppliedPaise } from "./report";
+import { advanceAppliedPaise, closedBranchDates } from "./report";
 import type { Advance, ReportSummary, SectionKey } from "./report";
 
 export type DailySalePoint = {
@@ -147,8 +147,10 @@ function monthlyTrendFor(
     bucket.reports += 1;
   }
 
+  const closed = closedBranchDates(summaries);
   for (const advance of advances) {
     if (!advance.appliedOn) continue;
+    if (closed.has(`${advance.branchId}|${advance.appliedOn}`)) continue;
     const bucket = byMonth.get(monthKey(advance.appliedOn));
     if (!bucket) continue;
     const paise = advanceAppliedPaise(advance);
@@ -235,9 +237,13 @@ export function buildRangeSales(
   // the range total, the daily series and the branch comparison all agree with
   // the dashboard.
   let advancePaise = 0;
+  const closed = closedBranchDates(summaries);
   for (const advance of advances) {
     if (!advance.appliedOn) continue;
     if (advance.appliedOn < start || advance.appliedOn > end) continue;
+    // A day the branch filed as closed cannot carry a sale, so an advance
+    // cannot be folded into it.
+    if (closed.has(`${advance.branchId}|${advance.appliedOn}`)) continue;
     const paise = advanceAppliedPaise(advance);
     if (paise <= 0) continue;
 

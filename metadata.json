@@ -1,8 +1,0 @@
-{
-  "name": "SK Tapri — Daily Sales Report",
-  "description": "Daily sales reporting for SK Tapri branches. Cash, online, finance, debt, exchange, cheque, store use, and other totals — all in one place.",
-  "permissions": [],
-  "capabilities": [
-    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
-  ]
-}

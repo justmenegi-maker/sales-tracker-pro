@@ -25,6 +25,7 @@ import {
   getDocs,
   onSnapshot,
   query,
+  runTransaction,
   setDoc,
   updateDoc,
   where,
@@ -32,10 +33,7 @@ import {
   type DocumentData,
   type DocumentSnapshot,
 } from "firebase/firestore";
-import {
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-} from "firebase/auth";
+import { signInWithEmailAndPassword } from "firebase/auth";
 import {
   auth,
   browserLocalPersistence,
@@ -49,13 +47,16 @@ import {
   signInWithRedirect,
   fbSignOut,
   onAuthStateChanged,
+  provisionAccount,
   type User,
 } from "./firebase";
+import { todayISO } from "./format";
 import {
   advanceApplyError,
   advanceRefundError,
   buildBranchDocument,
   buildReportEditPayload,
+  debtPaymentError,
   makeId,
   planReportDebtSync,
   reportDebtRows,
@@ -64,9 +65,11 @@ import {
 import type {
   Advance,
   AdvanceInput,
+  AdvanceRefund,
   Branch,
   DailyReport,
   Debt,
+  DebtPayment,
   LineCategory,
   OfflineSale,
   OfflineSaleInput,
@@ -183,6 +186,18 @@ type StoreValue = {
     amountPaise: number,
     note: string,
   ) => Promise<ActionResult>;
+  /**
+   * Admin-only: create the person's sign-in account and invite them to a
+   * branch in one step. Nothing in the app creates accounts on its own — a
+   * sign-in that finds no account is a dead end, not a new user.
+   */
+  createStaffAccount: (input: {
+    email: string;
+    password: string;
+    displayName: string;
+    branchId: string;
+    role?: "branch" | "admin";
+  }) => Promise<ActionResult>;
   addAdvance: (input: AdvanceInput) => Promise<ActionResult>;
   /** Fold a held advance into the sale filed on `appliedOn`. */
   applyAdvance: (advanceId: string, appliedOn: string) => Promise<ActionResult>;
@@ -808,35 +823,33 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         }
         return false;
       } catch (err: unknown) {
-        const fbErr = err as { code?: string; message?: string };
+        const code = (err as { code?: string } | null)?.code ?? "";
+
+        // Signing in never creates an account here. It used to, because a
+        // branch manager's first visit was also their sign-up — but that let
+        // anyone mint an account for an address they do not own, and an
+        // invitation to that address then handed over the branch. Accounts are
+        // now created by an admin (`createStaffAccount`).
         if (
-          fbErr.code === "auth/user-not-found" ||
-          fbErr.code === "auth/invalid-credential" ||
-          fbErr.code === "auth/invalid-login-credentials"
+          code === "auth/user-not-found" ||
+          code === "auth/invalid-credential" ||
+          code === "auth/invalid-login-credentials" ||
+          code === "auth/wrong-password"
         ) {
-          try {
-            const created = await createUserWithEmailAndPassword(
-              auth,
-              cleanEmail,
-              password,
-            );
-            if (created.user) {
-              const resolved = await resolveFirebaseUser(created.user);
-              setSession(resolved);
-              return true;
-            }
-          } catch (createErr: unknown) {
-            const cErr = createErr as { code?: string; message?: string };
-            setError(
-              cErr.code === "auth/email-already-in-use"
-                ? "Incorrect email or password."
-                : cErr.message || "Could not sign in.",
-            );
-            return false;
-          }
+          setError(
+            "Incorrect email or password. Accounts are created by an admin — ask them to set yours up if you have never signed in.",
+          );
+          return false;
         }
-        const msg = err instanceof Error ? err.message : String(err);
-        setError(msg);
+        if (code === "auth/too-many-requests") {
+          setError("Too many sign-in attempts. Wait a minute and try again.");
+          return false;
+        }
+        if (code === "auth/network-request-failed") {
+          setError("Could not reach the sign-in service. Check the connection and try again.");
+          return false;
+        }
+        setError(err instanceof Error ? err.message : "Could not sign in.");
         return false;
       }
     },
@@ -1278,35 +1291,77 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       note: string,
     ): Promise<ActionResult> => {
       setError(null);
-      const currentDebt = debts.find((d) => d.id === debtId);
-      const paymentItem = {
-        id: makeId("pay"),
-        amountPaise,
-        paidOn: new Date().toISOString().slice(0, 10),
-        note: note || null,
-      };
-
-      const updatedPayments = currentDebt
-        ? [...currentDebt.payments, paymentItem]
-        : [paymentItem];
-
-      try {
-        await updateDoc(doc(db, "debts", debtId), {
-          payments: updatedPayments,
-        });
-        return { ok: true, error: null };
-      } catch (err) {
-        const message = firestoreErrorMessage(
-          err,
-          OperationType.UPDATE,
-          `debts/${debtId}`,
-          "record this payment",
-        );
+      const fail = (message: string): ActionResult => {
         setError(message);
         return { ok: false, error: message };
+      };
+
+      if (!session) return fail("You must be signed in to record a payment.");
+
+      const payment: DebtPayment = {
+        id: makeId("pay"),
+        amountPaise,
+        paidOn: todayISO(),
+        note: note.trim() ? note.trim() : null,
+        recordedBy: session.id,
+        recordedByName: session.displayName || "Staff",
+      };
+
+      try {
+        // A transaction reads the debt as it is *now*, not as this tab last saw
+        // it. The new list used to be built from the local snapshot and written
+        // whole, so two people recording a payment at the same moment silently
+        // overwrote one of them; the ceiling check below was judged against the
+        // same stale copy.
+        const outcome = await runTransaction(db, async (tx) => {
+          const ref = doc(db, "debts", debtId);
+          const snapshot = await tx.get(ref);
+          if (!snapshot.exists()) {
+            return { ok: false as const, error: "That debt is no longer in the ledger." };
+          }
+
+          const data = snapshot.data() ?? {};
+          const debt: Debt = {
+            id: debtId,
+            branchId: data.branchId,
+            productName: data.productName,
+            amountPaise: data.amountPaise,
+            debtDate: data.debtDate,
+            dueDate: data.dueDate ?? null,
+            source: data.source ?? "report",
+            voided: data.voided === true,
+            payments: Array.isArray(data.payments)
+              ? (data.payments as DebtPayment[])
+              : [],
+          };
+
+          if (debt.voided) {
+            return { ok: false as const, error: "That debt has been voided." };
+          }
+
+          // Checked against the server's copy, so a payment cannot exceed the
+          // balance even from a tab that has been open all day.
+          const blocked = debtPaymentError(debt, amountPaise);
+          if (blocked) return { ok: false as const, error: blocked };
+
+          tx.update(ref, { payments: [...debt.payments, payment] });
+          return { ok: true as const, error: null };
+        });
+
+        if (!outcome.ok) return fail(outcome.error);
+        return { ok: true, error: null };
+      } catch (err) {
+        return fail(
+          firestoreErrorMessage(
+            err,
+            OperationType.UPDATE,
+            `debts/${debtId}`,
+            "record this payment",
+          ),
+        );
       }
     },
-    [debts],
+    [session],
   );
 
   const setDebtDueDate = useCallback(
@@ -1507,17 +1562,55 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       }
 
       try {
-        await updateDoc(doc(db, "advances", input.advanceId), {
-          refunds: [
-            ...current.refunds,
+        // Same race as a debt payment: the refund list is rebuilt from the
+        // server's copy inside a transaction rather than from this tab's.
+        const outcome = await runTransaction(db, async (tx) => {
+          const ref = doc(db, "advances", input.advanceId);
+          const snapshot = await tx.get(ref);
+          if (!snapshot.exists()) {
+            return { ok: false as const, error: "That advance is no longer in the ledger." };
+          }
+
+          const data = snapshot.data() ?? {};
+          const refunds = Array.isArray(data.refunds)
+            ? (data.refunds as AdvanceRefund[])
+            : [];
+          const reason = advanceRefundError(
             {
-              id: makeId("refund"),
-              amountPaise: input.amountPaise,
-              refundedOn: input.refundedOn,
-              note: input.note?.trim() ? input.note.trim() : null,
+              id: input.advanceId,
+              branchId: data.branchId,
+              customerName: data.customerName,
+              itemName: data.itemName,
+              amountPaise: data.amountPaise,
+              advanceDate: data.advanceDate,
+              appliedOn: data.appliedOn ?? null,
+              appliedByName: data.appliedByName ?? null,
+              refunds,
+              note: data.note ?? null,
+              createdAt: data.createdAt,
             },
-          ],
+            input.amountPaise,
+          );
+          if (reason) return { ok: false as const, error: reason };
+
+          tx.update(ref, {
+            refunds: [
+              ...refunds,
+              {
+                id: makeId("refund"),
+                amountPaise: input.amountPaise,
+                refundedOn: input.refundedOn,
+                note: input.note?.trim() ? input.note.trim() : null,
+              },
+            ],
+          });
+          return { ok: true as const, error: null };
         });
+
+        if (!outcome.ok) {
+          setError(outcome.error);
+          return { ok: false, error: outcome.error };
+        }
         return { ok: true, error: null };
       } catch (err) {
         const message = firestoreErrorMessage(
@@ -1772,6 +1865,79 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     [session],
   );
 
+  const createStaffAccount = useCallback(
+    async (input: {
+      email: string;
+      password: string;
+      displayName: string;
+      branchId: string;
+      role?: "branch" | "admin";
+    }): Promise<ActionResult> => {
+      setError(null);
+      const fail = (message: string): ActionResult => {
+        setError(message);
+        return { ok: false, error: message };
+      };
+
+      if (session?.role !== "admin") {
+        return fail("Only admins can create staff accounts.");
+      }
+
+      const cleanEmail = input.email.trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+        return fail("Enter a valid email address.");
+      }
+      if (input.password.length < 6) {
+        return fail("Use a password of at least 6 characters.");
+      }
+      if (!input.branchId) {
+        return fail("Pick the branch this person will manage.");
+      }
+
+      try {
+        await provisionAccount(cleanEmail, input.password);
+      } catch (err) {
+        const code = (err as { code?: string } | null)?.code ?? "";
+        if (code === "auth/email-already-in-use") {
+          // Nothing in this app signs people up, so an existing account for an
+          // address nobody has invited is worth stopping on: the address may
+          // already belong to someone else, and an invitation would give them
+          // the branch.
+          return fail(
+            "That email already has a sign-in account. If it is not the person you are setting up, check with them before inviting the address. To give an existing account access, use Invite instead.",
+          );
+        }
+        if (code === "auth/invalid-email") return fail("Enter a valid email address.");
+        if (code === "auth/weak-password") return fail("Use a password of at least 6 characters.");
+        if (code === "auth/operation-not-allowed") {
+          return fail(
+            "Email/password sign-in is switched off for this project. Enable it under Firebase Console → Authentication → Sign-in method.",
+          );
+        }
+        return fail(
+          err instanceof Error ? err.message : "Could not create the account.",
+        );
+      }
+
+      // The account exists from here on, so an invitation that does not go
+      // through is a caveat on a created account, not a failed creation.
+      const invited = await inviteStaff({
+        email: cleanEmail,
+        displayName: input.displayName,
+        branchId: input.branchId,
+        role: input.role,
+      });
+      if (!invited.ok) {
+        const message = `The account was created, but ${invited.error ?? "the invitation could not be saved"} They can sign in, but no branch is attached until they are invited.`;
+        setError(message);
+        return { ok: true, error: message };
+      }
+
+      return { ok: true, error: null };
+    },
+    [inviteStaff, session],
+  );
+
   const value = useMemo<StoreValue>(
     () => ({
       ready,
@@ -1792,6 +1958,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       updateReport,
       setReportReview,
       recordDebtPayment,
+      createStaffAccount,
       setDebtDueDate,
       addManualDebt,
       addAdvance,
@@ -1812,6 +1979,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       advances,
       applyAdvance,
       branches,
+      createStaffAccount,
       debts,
       deleteBranch,
       deleteInvite,

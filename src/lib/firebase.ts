@@ -1,5 +1,6 @@
-import { initializeApp, getApps, getApp } from "firebase/app";
+import { initializeApp, getApps, getApp, deleteApp } from "firebase/app";
 import {
+  createUserWithEmailAndPassword,
   getAuth,
   GoogleAuthProvider,
   browserLocalPersistence,
@@ -51,6 +52,33 @@ export const googleProvider = new GoogleAuthProvider();
 // though the person never closed anything. Asking for the chooser keeps the
 // flow visible and gives the popup a window to finish in.
 googleProvider.setCustomParameters({ prompt: "select_account" });
+
+/**
+ * Creates a staff account without touching the signed-in admin's session.
+ *
+ * `createUserWithEmailAndPassword` on the app's own auth instance signs the new
+ * account in and drops the admin, and the JS SDK has no "create another user"
+ * call. A second Firebase app keeps its own auth state, so provisioning from
+ * the admin portal leaves the admin where they are.
+ */
+export async function provisionAccount(
+  email: string,
+  password: string,
+): Promise<void> {
+  const name = "sktapri-provision";
+  const secondary =
+    getApps().find((existing) => existing.name === name) ??
+    initializeApp(firebaseConfig, name);
+  const secondaryAuth = getAuth(secondary);
+
+  try {
+    await createUserWithEmailAndPassword(secondaryAuth, email, password);
+  } finally {
+    // The provisional session is never used: the person signs in themselves.
+    await fbSignOut(secondaryAuth).catch(() => {});
+    await deleteApp(secondary).catch(() => {});
+  }
+}
 
 function buildFirestoreErrorInfo(
   error: unknown,

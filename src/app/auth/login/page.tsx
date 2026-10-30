@@ -125,7 +125,8 @@ export default function LoginPage() {
                   Sign in to SK Tapri
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                  Sign in with your Google account or administrator credentials.
+                  Sign in with the Google account or the email and password your
+                  admin set up for you.
                 </p>
               </div>
 
@@ -179,7 +180,7 @@ export default function LoginPage() {
                       setEmail(event.target.value);
                       if (error) clearError();
                     }}
-                    placeholder="justmenegi@gmail.com"
+                    placeholder="you@shop.com"
                   />
                 </div>
                 <div className="space-y-1">
@@ -210,8 +211,8 @@ export default function LoginPage() {
               </form>
 
               <div className="border-t pt-3 text-center text-xs text-muted-foreground">
-                Staff invited by an Admin can sign in using their Gmail account to
-                access their assigned branch reports.
+                Accounts are created by an admin — there is no sign-up here. If
+                you have never signed in, ask your admin to set your account up.
               </div>
             </CardContent>
           </Card>
