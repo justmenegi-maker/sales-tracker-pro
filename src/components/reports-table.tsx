@@ -126,7 +126,7 @@ export function ReportsTable({
               {emptyHint}
             </p>
           ) : (
-            <div className="divide-y">
+            <div className="Divide-y">
               {summaries.slice(0, visible).map((summary) => {
                 const { report, totalPaise, financeCount, sections } = summary;
                 const reviewed = report.reviewStatus !== "pending";
@@ -134,6 +134,7 @@ export function ReportsTable({
                   ...meta,
                   amount: sections[meta.key],
                 })).filter((section) => section.amount > 0);
+                const closedDay = report.shopClosed ?? false;
                 return (
                   <div key={report.id} className="py-3">
                     {/* The row wraps on a phone so the review badges and the
@@ -154,9 +155,14 @@ export function ReportsTable({
                               {formatWeekdayShort(report.reportDate)}
                             </span>
                           </span>
-                          <span className="block truncate text-xs text-muted-foreground">
+                          <span className="block truncate text-xs">
+                            {closedDay && (
+                              <span className="font-semibold not-italic text-amber-900">
+                                Shop closed ·
+                              </span>
+                            )}
                             {showBranch ? `${report.branchName} · ` : ""}
-                            {report.submittedByName}
+                            <span className="text-muted-foreground">{report.submittedByName}</span>
                             {financeCount > 0 ? ` · ${financeCount} finance` : ""}
                             {report.editedByName ? ` · edited by ${report.editedByName}` : ""}
                             {report.note ? ` · ${report.note}` : ""}
@@ -165,21 +171,22 @@ export function ReportsTable({
                               : ""}
                           </span>
                         </span>
-                        <span className="tnum text-sm font-semibold">
-                          {report.shopClosed ? "—" : formatINR(totalPaise)}
-                        </span>
-                        <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-                      </button>
-
-                      <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-1 sm:w-auto">
-                        {report.shopClosed ? (
+                        {closedDay ? (
                           <Badge
                             variant="outline"
-                            className="border-amber-500/50 bg-amber-500/10 text-amber-900"
+                            className="shrink-0 border-amber-500/50 bg-amber-500/10 text-amber-900"
                           >
                             Shop closed
                           </Badge>
-                        ) : null}
+                        ) : (
+                          <span className="shrink-0 tnum text-sm font-semibold">
+                            {formatINR(totalPaise)}
+                          </span>
+                        )}
+                        <ChevronRight className="shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+                      </button>
+
+                      <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-1 sm:w-auto">
                         {report.status === "voided" ? (
                           <Badge variant="destructive">Voided</Badge>
                         ) : (
@@ -215,10 +222,11 @@ export function ReportsTable({
                             ) : null}
                           </>
                         )}
-                        {canVoid && report.status === "active" ? (
+                        {canVoid && report.status === "active" && !closedDay ? (
                           <Button
                             size="sm"
                             variant="ghost"
+                            aria-label={`Void ${report.reportDate}`}
                             onClick={() => {
                               setVoidingFor(
                                 voidingFor === report.id ? null : report.id,
