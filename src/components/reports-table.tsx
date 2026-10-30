@@ -166,12 +166,20 @@ export function ReportsTable({
                           </span>
                         </span>
                         <span className="tnum text-sm font-semibold">
-                          {formatINR(totalPaise)}
+                          {report.shopClosed ? "—" : formatINR(totalPaise)}
                         </span>
                         <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
                       </button>
 
                       <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-1 sm:w-auto">
+                        {report.shopClosed ? (
+                          <Badge
+                            variant="outline"
+                            className="border-amber-500/50 bg-amber-500/10 text-amber-900"
+                          >
+                            Shop closed
+                          </Badge>
+                        ) : null}
                         {report.status === "voided" ? (
                           <Badge variant="destructive">Voided</Badge>
                         ) : (

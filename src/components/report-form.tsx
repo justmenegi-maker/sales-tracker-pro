@@ -2,7 +2,7 @@
 
 import { Fragment, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Plus, Trash2 } from "lucide-react";
+import { DoorClosed, Plus, Store, Trash2 } from "lucide-react";
 import { AdvanceForm } from "@/components/advance-ledger";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -42,6 +42,8 @@ export function ReportForm() {
   const [reportDate, setReportDate] = useState(todayISO());
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
   const branchId = selectedBranchId ?? (session?.branchId || branches[0]?.id || "");
+  /** The shop did not open: the day is filed as a notice, with no sale. */
+  const [shopClosed, setShopClosed] = useState(false);
   const [cashPaise, setCashPaise] = useState(0);
   const [onlinePaise, setOnlinePaise] = useState(0);
   const [note, setNote] = useState("");
@@ -78,6 +80,9 @@ export function ReportForm() {
   );
 
   const total = computeTotalSale(sections);
+  // A closed day has no sale to show, even if amounts were typed before the
+  // toggle was flipped.
+  const effectiveTotal = shopClosed ? 0 : total;
   const netInHand = total - expenseTotal;
 
   const alreadyFiled: DailyReport[] = useMemo(
@@ -100,6 +105,7 @@ export function ReportForm() {
   }
 
   function reset() {
+    setShopClosed(false);
     setCashPaise(0);
     setOnlinePaise(0);
     setNote("");
@@ -115,7 +121,7 @@ export function ReportForm() {
       toast.error("Pick the report date.");
       return;
     }
-    if (total <= 0) {
+    if (!shopClosed && total <= 0) {
       toast.error("Add at least one amount before submitting.");
       return;
     }
@@ -123,17 +129,22 @@ export function ReportForm() {
     const payload: SaveReportInput = {
       branchId,
       reportDate,
-      cashPaise,
-      onlinePaise,
+      shopClosed,
+      cashPaise: shopClosed ? 0 : cashPaise,
+      onlinePaise: shopClosed ? 0 : onlinePaise,
       note: note.trim() ? note.trim() : null,
       // Only a row with an amount is filed; a label on its own is not a sale.
-      lines: lines
-        .filter((line) => line.amountPaise > 0)
-        .map((line) => ({
-          category: line.category,
-          label: line.label.trim() || LINE_CATEGORY_META.find((m) => m.key === line.category)!.label,
-          amountPaise: line.amountPaise,
-        })),
+      lines: shopClosed
+        ? []
+        : lines
+            .filter((line) => line.amountPaise > 0)
+            .map((line) => ({
+              category: line.category,
+              label:
+                line.label.trim() ||
+                LINE_CATEGORY_META.find((m) => m.key === line.category)!.label,
+              amountPaise: line.amountPaise,
+            })),
     };
 
     setSaving(true);
@@ -149,7 +160,9 @@ export function ReportForm() {
     }
 
     toast.success(
-      `Report filed for ${formatDateLabel(reportDate)} — ${formatINR(total)}`,
+      shopClosed
+        ? `Closed-day notice sent for ${formatDateLabel(reportDate)}.`
+        : `Report filed for ${formatDateLabel(reportDate)} — ${formatINR(total)}`,
     );
 
     // A debt row that never reached the ledger is worth saying out loud.
@@ -203,40 +216,81 @@ export function ReportForm() {
                 </select>
               )}
             </div>
+
+            <div className="space-y-1 sm:col-span-2">
+              <Label>Shop status</Label>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant={shopClosed ? "outline" : "default"}
+                  className="flex-1 gap-2"
+                  aria-pressed={!shopClosed}
+                  onClick={() => setShopClosed(false)}
+                >
+                  <Store className="size-4" /> Shop open
+                </Button>
+                <Button
+                  type="button"
+                  variant={shopClosed ? "default" : "outline"}
+                  className="flex-1 gap-2"
+                  aria-pressed={shopClosed}
+                  onClick={() => setShopClosed(true)}
+                >
+                  <DoorClosed className="size-4" /> Shop closed
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Days the shop did not open are sent to the admin as a notice, so
+                they read as accounted for instead of as a missing filing.
+              </p>
+            </div>
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-lg">Cash &amp; online</CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-4 p-4 pt-0 sm:grid-cols-2 sm:p-6 sm:pt-0">
-            <div className="space-y-1">
-              <Label htmlFor="cash">Cash collected</Label>
-              <MoneyInput
-                id="cash"
-                value={cashPaise}
-                onValueChange={setCashPaise}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="online">Online / UPI</Label>
-              <MoneyInput
-                id="online"
-                value={onlinePaise}
-                onValueChange={setOnlinePaise}
-              />
-            </div>
-          </CardContent>
-        </Card>
+        {shopClosed ? (
+          <Card className="border-amber-500/40 bg-amber-500/5">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg">Shop closed</CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Nothing is recorded as a sale for {formatDateLabel(reportDate)}.
+                Say why in the note below — the admin sees it with the
+                closed-day notice.
+              </p>
+            </CardHeader>
+          </Card>
+        ) : (
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg">Cash &amp; online</CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-4 p-4 pt-0 sm:grid-cols-2 sm:p-6 sm:pt-0">
+              <div className="space-y-1">
+                <Label htmlFor="cash">Cash collected</Label>
+                <MoneyInput
+                  id="cash"
+                  value={cashPaise}
+                  onValueChange={setCashPaise}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="online">Online / UPI</Label>
+                <MoneyInput
+                  id="online"
+                  value={onlinePaise}
+                  onValueChange={setOnlinePaise}
+                />
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-lg">Description / note</CardTitle>
             <p className="text-xs text-muted-foreground">
-              Optional. Anything worth remembering about this day — a repair,
-              a customer request, a missing bill. It stays attached to the
-              daily report.
+              {shopClosed
+                ? "Say why the shop was closed. The admin sees this with the closed-day notice."
+                : "Optional. Anything worth remembering about this day — a repair, a customer request, a missing bill. It stays attached to the daily report."}
             </p>
           </CardHeader>
           <CardContent className="p-4 pt-0 sm:p-6 sm:pt-0">
@@ -247,7 +301,11 @@ export function ReportForm() {
               onChange={(event) => setNote(event.target.value)}
               rows={3}
               maxLength={1000}
-              placeholder="e.g. Power cut for two hours; one fan delivered late"
+              placeholder={
+                shopClosed
+                  ? "e.g. Shop shut for a family function; no deliveries taken"
+                  : "e.g. Power cut for two hours; one fan delivered late"
+              }
               className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             />
             <p className="mt-1 text-right text-[11px] text-muted-foreground">
@@ -256,7 +314,9 @@ export function ReportForm() {
           </CardContent>
         </Card>
 
-        {LINE_CATEGORY_META.map((meta) => {
+        {shopClosed
+          ? null
+          : LINE_CATEGORY_META.map((meta) => {
           const categoryLines = lines.filter(
             (line) => line.category === meta.key,
           );
@@ -355,60 +415,72 @@ export function ReportForm() {
         })}
 
         {/* Reminder only: its price is never part of Total Sale. */}
-        <OfflineSaleForm branchId={branchId} />
+        {shopClosed ? null : <OfflineSaleForm branchId={branchId} />}
       </div>
 
       <div className="space-y-4 lg:sticky lg:top-24">
         <Card className="border-primary/30">
           <CardHeader className="pb-3">
-            <CardTitle className="text-lg">Total Sale</CardTitle>
+            <CardTitle className="text-lg">
+              {shopClosed ? "Closed day" : "Total Sale"}
+            </CardTitle>
             <p className="text-xs text-muted-foreground">
-              Cash + Online + Finance + Debt + Exchange + Cheque + Store use +
-              Others. Expense rows are money paid out, so they sit below the
-              total and never inflate it.
+              {shopClosed
+                ? "The shop did not open, so this day carries no sale. The admin receives a closed-day notice to review."
+                : "Cash + Online + Finance + Debt + Exchange + Cheque + Store use + Others. Expense rows are money paid out, so they sit below the total and never inflate it."}
             </p>
           </CardHeader>
           <CardContent className="space-y-3 p-4 pt-0 sm:p-6 sm:pt-0">
             <p className="tnum font-display text-3xl font-semibold tracking-tight">
-              {formatINR(total)}
+              {formatINR(effectiveTotal)}
             </p>
-            <dl className="space-y-1.5 text-sm">
-              {SECTION_META.map((section) => (
-                <div
-                  key={section.key}
-                  className="flex items-baseline justify-between gap-3 border-b border-dashed pb-1.5 last:border-0"
-                >
-                  <dt className="text-muted-foreground">{section.label}</dt>
-                  <dd className="tnum">{formatINR(sections[section.key])}</dd>
-                </div>
-              ))}
-            </dl>
-            <dl className="space-y-1.5 border-t pt-2 text-sm">
-              <div className="flex items-baseline justify-between gap-3">
-                <dt className="text-muted-foreground">
-                  Expense (money out)
-                </dt>
-                <dd className="tnum text-rose-600">
-                  −{formatINR(expenseTotal)}
-                </dd>
-              </div>
-              <div className="flex items-baseline justify-between gap-3">
-                <dt className="font-medium">Net in hand</dt>
-                <dd className="tnum font-semibold">{formatINRSigned(netInHand)}</dd>
-              </div>
-            </dl>
+            {shopClosed ? null : (
+              <>
+                <dl className="space-y-1.5 text-sm">
+                  {SECTION_META.map((section) => (
+                    <div
+                      key={section.key}
+                      className="flex items-baseline justify-between gap-3 border-b border-dashed pb-1.5 last:border-0"
+                    >
+                      <dt className="text-muted-foreground">{section.label}</dt>
+                      <dd className="tnum">{formatINR(sections[section.key])}</dd>
+                    </div>
+                  ))}
+                </dl>
+                <dl className="space-y-1.5 border-t pt-2 text-sm">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <dt className="text-muted-foreground">
+                      Expense (money out)
+                    </dt>
+                    <dd className="tnum text-rose-600">
+                      −{formatINR(expenseTotal)}
+                    </dd>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <dt className="font-medium">Net in hand</dt>
+                    <dd className="tnum font-semibold">
+                      {formatINRSigned(netInHand)}
+                    </dd>
+                  </div>
+                </dl>
+              </>
+            )}
             <Button
               className="w-full"
               size="lg"
-              disabled={saving || total <= 0}
+              disabled={saving || (!shopClosed && total <= 0)}
               onClick={() => void submit()}
             >
-              {saving ? "Filing…" : `File report for ${formatDateLabel(reportDate)}`}
+              {saving
+                ? "Filing…"
+                : shopClosed
+                  ? "Send closed-day notice"
+                  : `File report for ${formatDateLabel(reportDate)}`}
             </Button>
             <p className="text-xs text-muted-foreground">
-              Submitted reports are locked: branch staff cannot edit them after
-              filing. An admin can correct the numbers or void the report if
-              something was entered wrong.
+              {shopClosed
+                ? "The notice records the day as closed and asks the admin to review the reason. An admin can still void it."
+                : "Submitted reports are locked: branch staff cannot edit them after filing. An admin can correct the numbers or void the report if something was entered wrong."}
             </p>
           </CardContent>
         </Card>
@@ -444,19 +516,19 @@ export function ReportForm() {
         <div className="flex items-center gap-3">
           <div className="min-w-0 flex-1">
             <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-              Total sale
+              {shopClosed ? "Shop closed" : "Total sale"}
             </p>
             <p className="tnum font-display text-lg font-semibold leading-tight">
-              {formatINR(total)}
+              {formatINR(effectiveTotal)}
             </p>
           </div>
           <Button
             size="lg"
             className="shrink-0"
-            disabled={saving || total <= 0}
+            disabled={saving || (!shopClosed && total <= 0)}
             onClick={() => void submit()}
           >
-            {saving ? "Filing…" : "File report"}
+            {saving ? "Filing…" : shopClosed ? "Send notice" : "File report"}
           </Button>
         </div>
       </div>

@@ -259,6 +259,12 @@ export function ReportDetail({
               Cash + Online + Finance + Debt + Exchange + Cheque + Store use +
               Others
             </p>
+            {report.shopClosed ? (
+              <p className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-900">
+                The shop was closed on this day. No sale is recorded, and the
+                day counts as accounted for rather than missing.
+              </p>
+            ) : null}
             {summary.expensePaise > 0 ? (
               <dl className="mt-2 space-y-1 border-t border-primary/20 pt-2 text-xs">
                 <div className="flex items-baseline justify-between gap-3">

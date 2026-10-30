@@ -16,6 +16,7 @@ import { formatINRWhole, todayISO } from "@/lib/format";
 import {
   debtOutstandingPaise,
   deriveDebtStatus,
+  isShopClosed,
   reviewCounts,
   summarizeReports,
   totalsByDate,
@@ -63,6 +64,10 @@ function DashboardBody() {
   );
 
   const todayTotal = totals.get(today) ?? 0;
+  const closedToday = scoped.some(
+    (summary) =>
+      summary.report.reportDate === today && isShopClosed(summary.report),
+  );
   const monthSummaries = useMemo(
     () =>
       scoped.filter((summary) => summary.report.reportDate.startsWith(month)),
@@ -147,12 +152,28 @@ function DashboardBody() {
           </div>
         ) : null}
 
+        {closedToday ? (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-900">
+            <span className="font-semibold">Shop closed today.</span>{" "}
+            <span className="text-xs">
+              The day is accounted for and the admin has the notice to review,
+              so it no longer shows up as a missing filing.
+            </span>
+          </div>
+        ) : null}
+
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <StatTile
             label="Today's Total Sale"
             value={formatINRWhole(todayTotal)}
-            hint={todayTotal > 0 ? "Report filed" : "Not filed yet"}
-            tone="primary"
+            hint={
+              closedToday
+                ? "Shop closed today"
+                : todayTotal > 0
+                  ? "Report filed"
+                  : "Not filed yet"
+            }
+            tone={closedToday ? "warning" : "primary"}
           />
           <StatTile
             label="This month"

@@ -178,6 +178,10 @@
           "description": "Report status",
           "enum": ["active", "voided"]
         },
+        "shopClosed": {
+          "type": "boolean",
+          "description": "True when the branch marked the shop closed for that day instead of filing a sale"
+        },
         "voidReason": {
           "type": "string",
           "description": "Reason for voiding the report if voided",

@@ -14,6 +14,7 @@ import {
   deriveAdvanceStatus,
   debtIsOverdue,
   deriveDebtStatus,
+  isShopClosed,
   planReportDebtSync,
   reportDebtRows,
   reportFinanceCount,
@@ -207,6 +208,53 @@ describe("summarizeReports", () => {
     expect(points[2].value).toBe(7212000);
     expect(points[0].value).toBe(0);
     expect(points.map((point) => point.label)).toEqual(["Sun", "Mon", "Tue"]);
+  });
+});
+
+describe("closed shop days", () => {
+  it("records no sale even if an amount reached the document", () => {
+    const [closed] = summarizeReports([
+      report({
+        shopClosed: true,
+        cashPaise: 500000,
+        onlinePaise: 100000,
+        lines: [
+          { id: "l1", category: "debt", label: "Fan", amountPaise: 200000 },
+          { id: "l2", category: "expense", label: "Power", amountPaise: 30000 },
+        ],
+      }),
+    ]);
+
+    expect(closed.totalPaise).toBe(0);
+    expect(closed.expensePaise).toBe(0);
+    expect(closed.financeCount).toBe(0);
+    expect(closed.hasDebt).toBe(false);
+    expect(closed.sections).toEqual({
+      cash: 0,
+      online: 0,
+      finance: 0,
+      debt: 0,
+      exchange: 0,
+      cheque: 0,
+      store_use: 0,
+      others: 0,
+    });
+  });
+
+  it("still gives the day a row, so it is accounted for rather than missing", () => {
+    const summaries = summarizeReports([
+      report({ reportDate: "2026-10-13", shopClosed: true }),
+    ]);
+    const byDate = totalsByDate(summaries);
+
+    expect(byDate.has("2026-10-13")).toBe(true);
+    expect(byDate.get("2026-10-13")).toBe(0);
+  });
+
+  it("reads an older report without the field as open", () => {
+    const open = report();
+    expect(isShopClosed(open)).toBe(false);
+    expect(reportTotalPaise(open)).toBeGreaterThan(0);
   });
 });
 

@@ -69,6 +69,13 @@ export type DailyReport = {
   onlinePaise: number;
   lines: ReportLine[];
   status: "active" | "voided";
+  /**
+   * The shop did not open that day. A closed day is a notice to the admin, not a
+   * sale: it carries no amounts, and it exists so the day reads as accounted for
+   * instead of as a missing filing. Absent on documents filed before this field
+   * existed, which read as open.
+   */
+  shopClosed?: boolean;
   voidReason: string | null;
   createdAt: string;
   /** Free-text note left by the person filing the day. */
@@ -179,6 +186,8 @@ export type SaveReportInput = {
   onlinePaise: number;
   lines: Array<Pick<ReportLine, "category" | "label" | "amountPaise">>;
   note?: string | null;
+  /** Mark the day as a closed-shop notice instead of a sale. */
+  shopClosed?: boolean;
 };
 
 /** What an admin changes when correcting a filed report. */
@@ -251,8 +260,31 @@ export function sectionTotals(report: DailyReport): Record<SectionKey, number> {
   return totals;
 }
 
+/** Every section at zero, for a day the shop was shut. */
+const ZERO_SECTIONS: Record<SectionKey, number> = {
+  cash: 0,
+  online: 0,
+  finance: 0,
+  debt: 0,
+  exchange: 0,
+  cheque: 0,
+  store_use: 0,
+  others: 0,
+};
+
+/**
+ * Whether the branch marked this day as one the shop was closed.
+ *
+ * Read through a helper so an older document without the field is never treated
+ * as closed, and so nothing has to remember that the field is optional.
+ */
+export function isShopClosed(report: DailyReport): boolean {
+  return report.shopClosed === true;
+}
+
 /** Total Sale for a report, computed through the shared totals module. */
 export function reportTotalPaise(report: DailyReport): number {
+  if (isShopClosed(report)) return 0;
   return computeTotalSale(sectionTotals(report));
 }
 
@@ -780,14 +812,19 @@ export type ReportSummary = {
 
 export function summarizeReports(reports: DailyReport[]): ReportSummary[] {
   return reports.map((report) => {
-    const sections = sectionTotals(report);
+    // A closed day is a notice, not a sale: nothing on it may move a total, even
+    // if an amount reached the document by hand or by an older client.
+    const closed = isShopClosed(report);
+    const sections = closed ? { ...ZERO_SECTIONS } : sectionTotals(report);
     return {
       report,
-      totalPaise: computeTotalSale(sections),
+      totalPaise: closed ? 0 : computeTotalSale(sections),
       sections,
-      expensePaise: reportExpensePaise(report),
-      financeCount: reportFinanceCount(report),
-      hasDebt: report.lines.some((line) => line.category === "debt"),
+      expensePaise: closed ? 0 : reportExpensePaise(report),
+      financeCount: closed ? 0 : reportFinanceCount(report),
+      hasDebt: closed
+        ? false
+        : report.lines.some((line) => line.category === "debt"),
     };
   });
 }

@@ -200,7 +200,7 @@ service cloud.firestore {
 
     function isValidDailyReport(data) {
       return data.keys().hasAll(['branchId', 'branchName', 'reportDate', 'submittedBy', 'cashPaise', 'onlinePaise', 'lines', 'status', 'reviewStatus', 'createdAt']) &&
-             data.keys().hasOnly(['branchId', 'branchName', 'reportDate', 'submittedBy', 'submittedByName', 'cashPaise', 'onlinePaise', 'lines', 'status', 'voidReason', 'note', 'reviewStatus', 'reviewNote', 'reviewedByName', 'reviewedAt', 'editedByName', 'editedAt', 'createdAt']) &&
+             data.keys().hasOnly(['branchId', 'branchName', 'reportDate', 'submittedBy', 'submittedByName', 'cashPaise', 'onlinePaise', 'lines', 'status', 'shopClosed', 'voidReason', 'note', 'reviewStatus', 'reviewNote', 'reviewedByName', 'reviewedAt', 'editedByName', 'editedAt', 'createdAt']) &&
              data.branchId is string && data.branchId.size() <= 64 &&
              data.branchName is string && data.branchName.size() <= 128 &&
              data.reportDate is string && data.reportDate.size() <= 10 &&
@@ -211,6 +211,9 @@ service cloud.firestore {
              data.status in ['active', 'voided'] &&
              data.reviewStatus in ['pending', 'ok', 'concern'] &&
              data.createdAt is string && data.createdAt.size() <= 64 &&
+             // Optional: a day the branch marked the shop closed. Older reports
+             // never carried it, and they read as open.
+             (!('shopClosed' in data) || data.shopClosed is bool) &&
              (!('voidReason' in data) || data.voidReason == null || (data.voidReason is string && data.voidReason.size() <= 500)) &&
              (!('note' in data) || data.note == null || (data.note is string && data.note.size() <= 1000)) &&
              (!('reviewNote' in data) || data.reviewNote == null || (data.reviewNote is string && data.reviewNote.size() <= 500)) &&

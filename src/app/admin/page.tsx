@@ -39,6 +39,7 @@ import {
   debtOutstandingPaise,
   deriveDebtStatus,
   reviewCounts,
+  reviewLabel,
   summarizeReports,
   totalsByBranchDate,
   totalsByDate,
@@ -62,6 +63,7 @@ function AdminBody() {
     deleteBranch,
     inviteStaff,
     deleteInvite,
+    setReportReview,
   } = useAppStore();
 
   const [activeTab, setActiveTab] = useState<"sales" | "staff">("sales");
@@ -186,6 +188,16 @@ function AdminBody() {
     [inRange],
   );
 
+  // Days a branch reported the shop closed. They are notices to review, not
+  // missing filings, so they are listed on their own.
+  const closedNotices = useMemo(
+    () => inRange.filter((summary) => summary.report.shopClosed),
+    [inRange],
+  );
+  const closedAwaitingReview = closedNotices.filter(
+    (summary) => summary.report.reviewStatus === "pending",
+  ).length;
+
   const trend = useMemo(
     () => trendSeries(rangeDailyTotals, days, today),
     [days, rangeDailyTotals, today],
@@ -275,6 +287,12 @@ function AdminBody() {
     }
     // The store knows why Firestore refused the write; "try again" hid that.
     toast.error(result.error ?? "Could not create branch. Please try again.");
+  }
+
+  async function acknowledgeClosed(reportId: string) {
+    const result = await setReportReview(reportId, "ok", "");
+    if (result.ok) toast.success("Closed-day notice marked reviewed.");
+    else toast.error(result.error ?? "Could not save the review.");
   }
 
   async function handleInviteStaff(e: React.FormEvent) {
@@ -427,6 +445,62 @@ function AdminBody() {
                 hint={`${visibleBranches.length} branches × ${days} days`}
               />
             </div>
+
+            {closedNotices.length > 0 ? (
+              <Card className="border-amber-500/40 bg-amber-500/5">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-lg">
+                    Closed shop notices ({closedNotices.length})
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground">
+                    Days a branch marked the shop closed instead of filing a
+                    sale. They count as accounted for, not as missing days
+                    {closedAwaitingReview > 0
+                      ? ` · ${closedAwaitingReview} awaiting review`
+                      : ""}
+                    .
+                  </p>
+                </CardHeader>
+                <CardContent className="space-y-2 p-4 pt-0 sm:p-6 sm:pt-0">
+                  {closedNotices.map((summary) => (
+                    <div
+                      key={summary.report.id}
+                      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-md border bg-background/60 p-2.5"
+                    >
+                      <span className="text-sm font-medium">
+                        {formatDateLabel(summary.report.reportDate)}
+                      </span>
+                      <Badge variant="outline">
+                        {summary.report.branchName}
+                      </Badge>
+                      <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                        {summary.report.note || "No reason given"}
+                      </span>
+                      <Badge
+                        variant={
+                          summary.report.reviewStatus === "ok"
+                            ? "secondary"
+                            : summary.report.reviewStatus === "concern"
+                              ? "destructive"
+                              : "default"
+                        }
+                      >
+                        {reviewLabel(summary.report.reviewStatus)}
+                      </Badge>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={summary.report.reviewStatus === "ok"}
+                        onClick={() => void acknowledgeClosed(summary.report.id)}
+                      >
+                        <CheckCircle2 className="size-4" />
+                        Mark reviewed
+                      </Button>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            ) : null}
 
             <Card>
               <CardHeader className="pb-3">

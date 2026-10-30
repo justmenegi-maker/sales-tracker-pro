@@ -552,6 +552,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
               onlinePaise: d.onlinePaise,
               lines: d.lines || [],
               status: d.status || "active",
+              shopClosed: d.shopClosed === true,
               voidReason: d.voidReason || null,
               note: d.note || null,
               reviewStatus: d.reviewStatus || "pending",
@@ -868,31 +869,37 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         return failure("You are only authorized to file reports for your assigned branch.");
       }
 
-      const sections = {
-        cash: input.cashPaise,
-        online: input.onlinePaise,
-        finance: sumCategory(input.lines, "finance"),
-        debt: sumCategory(input.lines, "debt"),
-        exchange: sumCategory(input.lines, "exchange"),
-        cheque: sumCategory(input.lines, "cheque"),
-        store_use: sumCategory(input.lines, "store_use"),
-        others: sumCategory(input.lines, "others"),
-      };
+      // A closed-shop notice records the day, not the money, so there is nothing
+      // to add up and nothing to validate.
+      const shopClosed = input.shopClosed === true;
 
-      try {
-        computeTotalSale(sections);
-      } catch {
-        return failure("Every amount must be a non-negative number of rupees.");
-      }
+      if (!shopClosed) {
+        const sections = {
+          cash: input.cashPaise,
+          online: input.onlinePaise,
+          finance: sumCategory(input.lines, "finance"),
+          debt: sumCategory(input.lines, "debt"),
+          exchange: sumCategory(input.lines, "exchange"),
+          cheque: sumCategory(input.lines, "cheque"),
+          store_use: sumCategory(input.lines, "store_use"),
+          others: sumCategory(input.lines, "others"),
+        };
 
-      // Expense rows are outside Total Sale, so the check above never sees
-      // them. Validate them here rather than storing a negative expense.
-      if (
-        input.lines.some(
-          (line) => !Number.isInteger(line.amountPaise) || line.amountPaise < 0,
-        )
-      ) {
-        return failure("Every amount must be a non-negative number of rupees.");
+        try {
+          computeTotalSale(sections);
+        } catch {
+          return failure("Every amount must be a non-negative number of rupees.");
+        }
+
+        // Expense rows are outside Total Sale, so the check above never sees
+        // them. Validate them here rather than storing a negative expense.
+        if (
+          input.lines.some(
+            (line) => !Number.isInteger(line.amountPaise) || line.amountPaise < 0,
+          )
+        ) {
+          return failure("Every amount must be a non-negative number of rupees.");
+        }
       }
 
       const branch = resolveFilingBranch({
@@ -906,10 +913,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       }
 
       const reportId = makeId("report");
-      const linesWithIds = input.lines.map((line) => ({
-        ...line,
-        id: makeId("line"),
-      }));
+      const linesWithIds = shopClosed
+        ? []
+        : input.lines.map((line) => ({
+            ...line,
+            id: makeId("line"),
+          }));
 
       const reportPayload = {
         branchId: branch.id,
@@ -917,10 +926,14 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         reportDate: input.reportDate,
         submittedBy: session.id,
         submittedByName: session.displayName || "Branch Staff",
-        cashPaise: input.cashPaise,
-        onlinePaise: input.onlinePaise,
+        cashPaise: shopClosed ? 0 : input.cashPaise,
+        onlinePaise: shopClosed ? 0 : input.onlinePaise,
         lines: linesWithIds,
         status: "active" as const,
+        // Written only when the day is closed: an open report keeps exactly the
+        // shape the rules already deployed accept, so a closed-day notice is the
+        // only write that needs the newer rules.
+        ...(shopClosed ? { shopClosed: true } : {}),
         note: input.note?.trim() ? input.note.trim() : null,
         reviewStatus: "pending" as const,
         createdAt: new Date().toISOString(),
@@ -944,7 +957,9 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       // The debt rows are already part of the report saved above, so a ledger
       // write that fails is a caveat on a filed report, not a failed filing.
       // One batch keeps the ledger to a single write instead of a write per row.
-      const debtLines = input.lines.filter((line) => line.category === "debt");
+      const debtLines = shopClosed
+        ? []
+        : input.lines.filter((line) => line.category === "debt");
       let ledgerError: string | null = null;
       if (debtLines.length > 0) {
         const batch = writeBatch(db);

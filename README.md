@@ -25,6 +25,30 @@ the report sheet as *Description / note*, and listed in the PDF export as a
 **Daily notes** section, so the reason behind a day never lives only in someone's
 head.
 
+## Closed shop days
+
+Some days the shop simply does not open. The daily form carries a **Shop status**
+toggle (open / closed) in the *Report details* card. Choosing **Shop closed**
+hides the cash, category, advance and reminder sections, turns the submit action
+into *Send closed-day notice*, and files the day with `shopClosed: true` and no
+amounts at all.
+
+A closed day is a notice, not a sale:
+
+- It adds nothing to Total Sale, the section mix, expenses or the debt ledger —
+  `summarizeReports` zeroes a closed document even if an amount reached it by
+  hand or from an older client.
+- It still creates a row for the date, so the day reads as **accounted for**
+  instead of as a missing filing. The admin's *Missing branch days* tile and the
+  per-branch missing counts therefore stop flagging days the shop was shut.
+- The reason goes in the note, which the admin sees in the new **Closed shop
+  notices** panel on `/admin` — a list of closed days in the selected range, with
+  the branch, the reason, the review state and a **Mark reviewed** action. New
+  notices start as `pending`, so they join the normal review queue.
+
+Reports filed before this field existed have no `shopClosed` key and read as
+open. `isShopClosed()` is the single place that decides.
+
 ## Expenses (money out)
 
 An **Expense** section sits directly above *Others* in the daily report form, for
