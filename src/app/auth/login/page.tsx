@@ -30,39 +30,34 @@ export default function LoginPage() {
   const params = new URLSearchParams(search);
   const requested = params.get("returnTo");
   const returnTo = requested?.startsWith("/") ? requested : null;
-  const wantsAdmin = params.get("role") === "admin";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
 
-  const fallback = wantsAdmin ? "/admin" : "/dashboard";
+  // One destination, derived from the signed-in role. The effect below is the
+  // only place that navigates, so a sign-in cannot race two redirects.
+  const destination =
+    returnTo ?? (session?.role === "admin" ? "/admin" : "/dashboard");
 
   useEffect(() => {
-    if (ready && session) router.replace(returnTo ?? fallback);
-  }, [fallback, ready, returnTo, router, session]);
+    if (ready && session) router.replace(destination);
+  }, [destination, ready, router, session]);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     setSubmitting(true);
     const ok = await signIn(email.trim(), password);
     setSubmitting(false);
-    if (ok) {
-      const target = returnTo ?? (email.trim().toLowerCase() === "justmenegi@gmail.com" ? "/admin" : "/dashboard");
-      toast.success("Signed in successfully.");
-      router.replace(target);
-    }
+    if (ok) toast.success("Signed in successfully.");
   }
 
   async function handleGoogleSignIn() {
     setGoogleLoading(true);
     const ok = await signInWithGoogle();
     setGoogleLoading(false);
-    if (ok) {
-      toast.success("Signed in with Google.");
-      router.replace(returnTo ?? fallback);
-    }
+    if (ok) toast.success("Signed in with Google.");
   }
 
   return (

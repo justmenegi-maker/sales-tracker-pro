@@ -11,12 +11,7 @@ import {
   onAuthStateChanged,
   type User,
 } from "firebase/auth";
-import {
-  getFirestore,
-  doc,
-  getDocFromServer,
-  type Firestore,
-} from "firebase/firestore";
+import { getFirestore, type Firestore } from "firebase/firestore";
 import firebaseConfig from "../../firebase-applet-config.json";
 
 export enum OperationType {
@@ -81,24 +76,13 @@ function buildFirestoreErrorInfo(
   };
 }
 
-export function handleFirestoreError(
-  error: unknown,
-  operationType: OperationType,
-  path: string | null,
-): never {
-  const errInfo = buildFirestoreErrorInfo(error, operationType, path);
-  console.error("Firestore Error: ", JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
-}
-
 /**
- * Logs a Firestore failure in the same structured shape as
- * `handleFirestoreError`, and returns something worth showing the person who
- * pressed the button.
+ * Logs a Firestore failure in a structured shape and returns something worth
+ * showing the person who pressed the button.
  *
  * A write that a click handler awaits must come back as a result the handler can
- * display: `handleFirestoreError` throws, and a throw out of a click handler
- * leaves the form stuck on "Filing…" with no message at all.
+ * display: a thrown error leaves the form stuck on "Filing…" with no message at
+ * all.
  */
 export function firestoreErrorMessage(
   error: unknown,
@@ -125,24 +109,6 @@ export function firestoreErrorMessage(
 
   const detail = error instanceof Error ? error.message : String(error);
   return `Could not ${action}. ${detail}`;
-}
-
-export async function testConnection(): Promise<void> {
-  try {
-    await getDocFromServer(doc(db, "test", "connection"));
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      error.message.includes("the client is offline")
-    ) {
-      console.error("Please check your Firebase configuration.");
-    }
-  }
-}
-
-// Test connection when imported in browser
-if (typeof window !== "undefined") {
-  testConnection();
 }
 
 export {

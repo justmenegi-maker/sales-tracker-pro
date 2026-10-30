@@ -137,7 +137,6 @@ export type ReportVoidResult = ActionResult & {
 
 type StoreValue = {
   ready: boolean;
-  backend: "firebase";
   session: Session | null;
   branches: Branch[];
   reports: DailyReport[];
@@ -309,44 +308,42 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     const emailLower = (user.email || "").toLowerCase();
     const isAdminUser = emailLower === BOOTSTRAP_ADMIN_EMAIL.toLowerCase();
 
-    // Check admin document
-    let adminDocExists = false;
-    try {
-      const adminSnap = await getDoc(doc(db, "admins", user.uid));
-      adminDocExists = adminSnap.exists();
-    } catch {
-      adminDocExists = false;
-    }
+    // The admin flag and the profile are independent reads, so they go out
+    // together: this runs on every sign-in and every reload, and one round trip
+    // beats two.
+    const [adminSnap, userSnap] = await Promise.all([
+      getDoc(doc(db, "admins", user.uid)).catch(() => null),
+      getDoc(doc(db, "users", user.uid)).catch(() => null),
+    ]);
 
+    const adminDocExists = adminSnap?.exists() ?? false;
     const isAdmin = isAdminUser || adminDocExists;
 
-    // Check user profile document
     let profileRole: "admin" | "branch" = isAdmin ? "admin" : "branch";
     let branchId: string | null = null;
     let branchName: string | null = null;
+    const profile = userSnap?.exists() ? userSnap.data() : null;
 
-    try {
-      const userDocRef = doc(db, "users", user.uid);
-      const userSnap = await getDoc(userDocRef);
-
-      if (userSnap.exists()) {
-        const udata = userSnap.data();
-        profileRole = isAdmin ? "admin" : (udata.role as "admin" | "branch") || "branch";
-        branchId = udata.branchId || null;
-      } else {
-        // Optional keys are omitted rather than written as null: the security
-        // rules require a string whenever the key is present, so a `branchId:
-        // null` profile was refused outright and a new account ended up with no
-        // profile document at all (which then broke the invitation link-up).
-        await setDoc(userDocRef, {
+    if (profile) {
+      profileRole = isAdmin
+        ? "admin"
+        : (profile.role as "admin" | "branch") || "branch";
+      branchId = profile.branchId || null;
+    } else if (userSnap) {
+      // Optional keys are omitted rather than written as null: the security
+      // rules require a string whenever the key is present, so a `branchId:
+      // null` profile was refused outright and a new account ended up with no
+      // profile document at all (which then broke the invitation link-up).
+      try {
+        await setDoc(doc(db, "users", user.uid), {
           email: user.email || "",
           displayName: user.displayName || user.email?.split("@")[0] || "User",
           role: profileRole,
           createdAt: new Date().toISOString(),
         });
+      } catch (err) {
+        console.warn("Could not write user profile:", err);
       }
-    } catch (err) {
-      console.warn("Could not read/write user profile:", err);
     }
 
     // Check if staff has an invite record by email
@@ -358,13 +355,23 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           branchId = inv.branchId;
           branchName = inv.branchName;
           profileRole = inv.role || "branch";
-          await updateDoc(doc(db, "users", user.uid), {
-            branchId: inv.branchId,
-            role: profileRole,
-          });
-          await updateDoc(doc(db, "invites", inviteDocSnap.id), {
-            status: "active",
-          });
+          // Only write when the link-up is not already in place: resolving the
+          // session runs on every reload, and re-writing identical documents
+          // each time is a write nobody asked for.
+          if (
+            profile?.branchId !== inv.branchId ||
+            profile?.role !== profileRole
+          ) {
+            await updateDoc(doc(db, "users", user.uid), {
+              branchId: inv.branchId,
+              role: profileRole,
+            });
+          }
+          if (inv.status !== "active") {
+            await updateDoc(doc(db, "invites", inviteDocSnap.id), {
+              status: "active",
+            });
+          }
         }
       } catch (err) {
         console.warn("Could not check staff invite:", err);
@@ -380,10 +387,14 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
             const bDoc = branchesSnap.docs[0];
             branchId = bDoc.id;
             branchName = bDoc.data().name;
-            await updateDoc(doc(db, "users", user.uid), {
-              branchId,
-              role: "branch",
-            });
+            // Same guard as the invite link-up: an already-linked manager does
+            // not need the profile rewritten on every load.
+            if (profile?.branchId !== branchId) {
+              await updateDoc(doc(db, "users", user.uid), {
+                branchId,
+                role: "branch",
+              });
+            }
           }
         } catch (err) {
           console.warn("Could not check branch managerEmail:", err);
@@ -932,31 +943,33 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       //
       // The debt rows are already part of the report saved above, so a ledger
       // write that fails is a caveat on a filed report, not a failed filing.
+      // One batch keeps the ledger to a single write instead of a write per row.
       const debtLines = input.lines.filter((line) => line.category === "debt");
       let ledgerError: string | null = null;
-      for (const line of debtLines) {
-        const debtId = makeId("debt");
-        const debtPayload = {
-          branchId: branch.id,
-          productName: line.label || "Credit sale item",
-          amountPaise: line.amountPaise,
-          debtDate: input.reportDate,
-          source: "report" as const,
-          voided: false,
-          payments: [],
-          createdAt: new Date().toISOString(),
-        };
+      if (debtLines.length > 0) {
+        const batch = writeBatch(db);
+        const createdAt = new Date().toISOString();
+        for (const line of debtLines) {
+          batch.set(doc(db, "debts", makeId("debt")), {
+            branchId: branch.id,
+            productName: line.label || "Credit sale item",
+            amountPaise: line.amountPaise,
+            debtDate: input.reportDate,
+            source: "report" as const,
+            voided: false,
+            payments: [],
+            createdAt,
+          });
+        }
         try {
-          await setDoc(doc(db, "debts", debtId), debtPayload);
+          await batch.commit();
         } catch (err) {
-          ledgerError =
-            ledgerError ??
-            firestoreErrorMessage(
-              err,
-              OperationType.CREATE,
-              `debts/${debtId}`,
-              "add the debt to the ledger",
-            );
+          ledgerError = firestoreErrorMessage(
+            err,
+            OperationType.WRITE,
+            "debts",
+            "add the debt to the ledger",
+          );
         }
       }
 
@@ -1747,7 +1760,6 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const value = useMemo<StoreValue>(
     () => ({
       ready,
-      backend: "firebase",
       session,
       branches,
       reports,

@@ -126,8 +126,8 @@ export function ReportForm() {
       cashPaise,
       onlinePaise,
       note: note.trim() ? note.trim() : null,
+      // Only a row with an amount is filed; a label on its own is not a sale.
       lines: lines
-        .filter((line) => line.amountPaise > 0 || line.label.trim().length > 0)
         .filter((line) => line.amountPaise > 0)
         .map((line) => ({
           category: line.category,

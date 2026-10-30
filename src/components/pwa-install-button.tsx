@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import { useState } from "react";
 import { Download, Share2, Smartphone, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { usePWAInstall } from "@/lib/use-pwa-install";
